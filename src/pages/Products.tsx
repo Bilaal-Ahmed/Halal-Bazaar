@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { db } from '../firebase';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { Product, SAMPLE_PRODUCTS, CATEGORIES } from '../types';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { Product, CATEGORIES } from '../types';
 import { ProductCard } from '../components/ProductCard';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Input } from '../../components/ui/input';
@@ -15,7 +15,7 @@ import { Badge } from '../../components/ui/badge';
 import { useCart } from '../contexts/CartContext';
 import { motion } from 'motion/react';
 
-type SortOption = 'newest' | 'price-asc' | 'price-desc' | 'rating';
+type SortOption = 'newest' | 'price-asc' | 'price-desc';
 
 export default function Products() {
   const [searchParams] = useSearchParams();
@@ -34,29 +34,30 @@ export default function Products() {
   }, [searchParams]);
 
   useEffect(() => {
-    const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
+    const q = query(
+      collection(db, 'products'),
+      where('published', '==', true),
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      const prods = snapshot.docs.map(doc => ({
+        id: doc.id,
+        rating: 0,
+        numReviews: 0,
+        ...doc.data(),
+      } as Product));
       setProducts(prods);
       setLoading(false);
     }, (error) => {
       console.error('Error fetching products:', error);
-      toast.error('Could not load products — showing demo catalog');
-      setProducts(SAMPLE_PRODUCTS);
+      toast.error('Could not load published product listings.');
+      setProducts([]);
       setLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
-  // Combine real + sample products (deduplicated)
-  const allProducts = useMemo(() => {
-    const realIds = new Set(products.map(p => p.id));
-    const extras = SAMPLE_PRODUCTS.filter(p => !realIds.has(p.id));
-    return [...products, ...extras];
-  }, [products]);
-
   const filteredProducts = useMemo(() => {
-    let filtered = allProducts.filter(p => {
+    let filtered = products.filter(p => {
       const matchSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.description.toLowerCase().includes(searchQuery.toLowerCase());
       const matchCat = category === 'all' || p.category === category;
@@ -66,10 +67,12 @@ export default function Products() {
 
     if (sort === 'price-asc') filtered = [...filtered].sort((a, b) => a.price - b.price);
     else if (sort === 'price-desc') filtered = [...filtered].sort((a, b) => b.price - a.price);
-    else if (sort === 'rating') filtered = [...filtered].sort((a, b) => b.rating - a.rating);
-
+    else filtered = [...filtered].sort((a, b) => {
+      const createdAt = (value: Product['createdAt']) => value?.toMillis?.() ?? new Date(value || 0).getTime();
+      return createdAt(b.createdAt) - createdAt(a.createdAt);
+    });
     return filtered;
-  }, [allProducts, searchQuery, category, priceRange, sort]);
+  }, [products, searchQuery, category, priceRange, sort]);
 
   const resetFilters = () => {
     setSearchQuery('');
@@ -91,7 +94,7 @@ export default function Products() {
         <div>
           <h1 className="text-3xl font-black">All Products</h1>
           <p className="text-muted-foreground mt-1">
-            {filteredProducts.length} halal-certified product{filteredProducts.length !== 1 ? 's' : ''} available
+            {filteredProducts.length} published product listing{filteredProducts.length !== 1 ? 's' : ''}
           </p>
         </div>
 
@@ -155,7 +158,6 @@ export default function Products() {
                   <SelectItem value="newest">Newest</SelectItem>
                   <SelectItem value="price-asc">Price: Low → High</SelectItem>
                   <SelectItem value="price-desc">Price: High → Low</SelectItem>
-                  <SelectItem value="rating">Top Rated</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -195,7 +197,11 @@ export default function Products() {
                 value={priceRange}
                 max={500}
                 step={5}
-                onValueChange={setPriceRange}
+                onValueChange={(value) => {
+                  setPriceRange(
+                    typeof value === 'number' ? [value, value] : [...value]
+                  );
+                }}
                 className="mt-2"
               />
             </div>

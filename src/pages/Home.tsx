@@ -1,16 +1,19 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { Button } from '../../components/ui/button';
 import { AuthModal } from '../components/AuthModal';
-import { CATEGORIES, SAMPLE_PRODUCTS } from '../types';
+import { CATEGORIES, Product } from '../types';
 import { ProductCard } from '../components/ProductCard';
 import {
   ShoppingBag, ArrowRight, ShieldCheck, Truck, HeadphonesIcon, Star,
   ChevronRight, Sparkles, Users, Award, Globe
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { db } from '../firebase';
+import { toast } from 'sonner';
 
 /* ─── Hero Section ─────────────────────────────────────────────────── */
 function HeroSection({ onLoginClick }: { onLoginClick: () => void }) {
@@ -42,7 +45,7 @@ function HeroSection({ onLoginClick }: { onLoginClick: () => void }) {
           <div className="text-white space-y-8 animate-fade-in-up">
             <div className="inline-flex items-center gap-2 bg-white/10 border border-white/20 rounded-full px-4 py-2 text-sm font-medium backdrop-blur-sm">
               <Sparkles className="w-4 h-4 text-yellow-400" />
-              <span>Pakistan's #1 Halal E-Commerce</span>
+              <span>Pakistan's Halal Marketplace</span>
             </div>
 
             <h1 className="text-5xl md:text-6xl lg:text-7xl font-black leading-[1.05] tracking-tighter">
@@ -54,21 +57,17 @@ function HeroSection({ onLoginClick }: { onLoginClick: () => void }) {
             </h1>
 
             <p className="text-lg md:text-xl text-white/75 max-w-lg leading-relaxed">
-              Discover thousands of halal-certified products across food, fashion, beauty, and more —
-              all from verified, trusted sellers.
+              Browse published listings across food, fashion, beauty, and more from sellers reviewed by marketplace administrators.
             </p>
 
             <div className="flex flex-wrap gap-4">
-              <Button
+              <Link
                 id="hero-shop-btn"
-                asChild
-                size="lg"
-                className="bg-white text-primary hover:bg-white/90 font-bold px-8 h-14 text-base shadow-xl hover:shadow-white/20 transition-all hover:-translate-y-0.5"
+                to="/products"
+                className="inline-flex items-center justify-center rounded-lg bg-white text-primary hover:bg-white/90 font-bold px-8 h-14 text-base shadow-xl hover:shadow-white/20 transition-all hover:-translate-y-0.5"
               >
-                <Link to="/products">
-                  Shop Now <ArrowRight className="w-5 h-5 ml-2" />
-                </Link>
-              </Button>
+                Shop Now <ArrowRight className="w-5 h-5 ml-2" />
+              </Link>
 
               {!user && (
                 <Button
@@ -86,9 +85,9 @@ function HeroSection({ onLoginClick }: { onLoginClick: () => void }) {
             {/* Trust badges */}
             <div className="flex flex-wrap gap-6 pt-2">
               {[
-                { icon: <ShieldCheck className="w-4 h-4" />, text: '100% Halal Certified' },
-                { icon: <Star className="w-4 h-4 text-yellow-400" />, text: '4.9★ Rated' },
-                { icon: <Users className="w-4 h-4" />, text: '50K+ Customers' },
+                { icon: <ShieldCheck className="w-4 h-4" />, text: 'Seller-submitted halal information' },
+                { icon: <ShoppingBag className="w-4 h-4" />, text: 'Live product availability' },
+                { icon: <Users className="w-4 h-4" />, text: 'Seller applications reviewed' },
               ].map(b => (
                 <div key={b.text} className="flex items-center gap-2 text-sm text-white/80">
                   {b.icon}
@@ -133,10 +132,10 @@ function HeroSection({ onLoginClick }: { onLoginClick: () => void }) {
 /* ─── Stats Strip ───────────────────────────────────────────────────── */
 function StatsStrip() {
   const stats = [
-    { icon: <Users className="w-6 h-6" />, value: '50,000+', label: 'Happy Customers' },
-    { icon: <ShoppingBag className="w-6 h-6" />, value: '12,000+', label: 'Products Listed' },
-    { icon: <Award className="w-6 h-6" />, value: '800+', label: 'Verified Sellers' },
-    { icon: <Globe className="w-6 h-6" />, value: '35+', label: 'Countries Served' },
+    { icon: <Users className="w-6 h-6" />, value: 'Reviewed', label: 'Seller applications' },
+    { icon: <ShoppingBag className="w-6 h-6" />, value: 'Checked', label: 'Price and stock at checkout' },
+    { icon: <ShieldCheck className="w-6 h-6" />, value: 'Protected', label: 'Payment status transitions' },
+    { icon: <Globe className="w-6 h-6" />, value: 'Transparent', label: 'Manual transfer review' },
   ];
 
   return (
@@ -202,6 +201,34 @@ function CategoriesSection() {
 /* ─── Featured Products ──────────────────────────────────────────────── */
 function FeaturedProducts() {
   const { addToCart } = useCart();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const productQuery = query(
+      collection(db, 'products'),
+      where('published', '==', true),
+    );
+    return onSnapshot(productQuery, snapshot => {
+      const publishedProducts = snapshot.docs.map(document => ({
+        id: document.id,
+        rating: 0,
+        numReviews: 0,
+        ...document.data(),
+      } as Product));
+      publishedProducts.sort((left, right) => {
+        const createdAt = (value: Product['createdAt']) => value?.toMillis?.() ?? new Date(value || 0).getTime();
+        return createdAt(right.createdAt) - createdAt(left.createdAt);
+      });
+      setProducts(publishedProducts.slice(0, 6));
+      setLoading(false);
+    }, error => {
+      console.error('Could not load featured listings:', error);
+      setProducts([]);
+      setLoading(false);
+      toast.error('Featured listings could not be loaded.');
+    });
+  }, []);
 
   return (
     <section className="py-20 bg-slate-50">
@@ -211,15 +238,17 @@ function FeaturedProducts() {
             <span className="halal-badge mb-3">Handpicked for You</span>
             <h2 className="text-4xl font-black mt-3">Featured Products</h2>
           </div>
-          <Button asChild variant="outline" className="hidden md:flex gap-2">
-            <Link to="/products">
-              View All <ChevronRight className="w-4 h-4" />
-            </Link>
-          </Button>
+
+          <Link
+            to="/products"
+            className="hidden md:inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
+            View All <ChevronRight className="w-4 h-4" />
+          </Link>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {SAMPLE_PRODUCTS.slice(0, 6).map((product, i) => (
+          {products.map((product, i) => (
             <motion.div
               key={product.id}
               initial={{ opacity: 0, y: 20 }}
@@ -233,43 +262,53 @@ function FeaturedProducts() {
               />
             </motion.div>
           ))}
+          {!loading && products.length === 0 && (
+            <div className="sm:col-span-2 lg:col-span-3 rounded-2xl border border-dashed p-8 text-center text-muted-foreground">
+              No published listings yet. Approved sellers will appear here when they publish products.
+            </div>
+          )}
+          {loading && <div className="sm:col-span-2 lg:col-span-3 p-8 text-center text-muted-foreground">Loading published listings…</div>}
         </div>
 
         <div className="text-center mt-10 md:hidden">
-          <Button asChild variant="outline" size="lg" className="px-10">
-            <Link to="/products">View All Products</Link>
-          </Button>
+          <Link
+            to="/products"
+            className="inline-flex items-center justify-center rounded-lg border border-border bg-background px-10 py-2 text-sm font-medium hover:bg-muted"
+          >
+            View All Products
+          </Link>
         </div>
       </div>
     </section>
   );
 }
 
+
 /* ─── Why Us Section ────────────────────────────────────────────────── */
 function WhyUsSection() {
   const perks = [
     {
       icon: <ShieldCheck className="w-7 h-7" />,
-      title: 'Halal Certified',
-      desc: 'All products verified by certified Islamic scholars and halal certification bodies worldwide.',
+      title: 'Seller-provided information',
+      desc: 'Listings may include halal information supplied by their seller; the marketplace does not independently certify claims.',
       color: 'bg-green-50 text-green-600',
     },
     {
       icon: <Truck className="w-7 h-7" />,
-      title: 'Fast Delivery',
-      desc: 'Same-day delivery in major cities. Nationwide shipping with real-time tracking on every order.',
+      title: 'Order updates',
+      desc: 'Buyers can see seller fulfillment updates as orders move through processing, shipping, and delivery.',
       color: 'bg-blue-50 text-blue-600',
     },
     {
       icon: <HeadphonesIcon className="w-7 h-7" />,
-      title: '24/7 Support',
-      desc: 'Our dedicated team and AI assistant are always ready to answer your questions anytime.',
+      title: 'Seller review',
+      desc: 'Seller applications are reviewed before seller product and order tools become available.',
       color: 'bg-purple-50 text-purple-600',
     },
     {
       icon: <Award className="w-7 h-7" />,
-      title: 'Quality Guarantee',
-      desc: 'Not satisfied? Get a full refund within 30 days — no questions asked. We stand behind every product.',
+      title: 'Payment visibility',
+      desc: 'Manual bank transfers stay pending until reviewed. Gateway payments are not enabled without verified provider integrations.',
       color: 'bg-orange-50 text-orange-600',
     },
   ];
@@ -440,8 +479,6 @@ export default function Home() {
       <CategoriesSection />
       <FeaturedProducts />
       <WhyUsSection />
-      <Testimonials />
-      <Newsletter />
     </>
   );
 }

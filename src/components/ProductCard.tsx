@@ -4,9 +4,10 @@ import { Card, CardContent, CardFooter } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Product } from '../types';
-import { ShoppingCart, Star, Heart, ShieldCheck, Zap } from 'lucide-react';
+import { ShoppingCart, Heart, ShieldCheck, Zap } from 'lucide-react';
 import { useCart } from '../contexts/CartContext';
 import { motion } from 'motion/react';
+import { formatCurrency } from '../lib/currency';
 
 interface ProductCardProps {
   product: Product;
@@ -40,7 +41,7 @@ export function ProductCard({ product, onAddToCart }: ProductCardProps) {
 
         {/* Image */}
         <div className="relative aspect-square overflow-hidden bg-gray-50">
-          <Link to={`/products`}>
+          <Link to={`/products/${encodeURIComponent(product.id)}`}>
             <img
               src={imageUrl}
               alt={product.name}
@@ -56,7 +57,7 @@ export function ProductCard({ product, onAddToCart }: ProductCardProps) {
           <div className="absolute top-3 left-3 flex flex-col gap-1.5">
             {product.isHalalCertified && (
               <span className="halal-badge text-[10px] shadow-sm">
-                <ShieldCheck className="w-3 h-3" /> Halal
+                <ShieldCheck className="w-3 h-3" /> Seller marked halal
               </span>
             )}
             {discount && (
@@ -93,30 +94,17 @@ export function ProductCard({ product, onAddToCart }: ProductCardProps) {
             {product.description}
           </p>
 
-          {/* Rating */}
-          <div className="flex items-center gap-1.5 mt-3">
-            <div className="flex gap-0.5">
-              {[...Array(5)].map((_, i) => (
-                <Star
-                  key={i}
-                  className={`w-3.5 h-3.5 ${i < Math.round(product.rating) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-200 fill-gray-200'}`}
-                />
-              ))}
-            </div>
-            <span className="text-xs font-semibold text-gray-700">{product.rating.toFixed(1)}</span>
-            <span className="text-xs text-muted-foreground">({product.numReviews.toLocaleString()})</span>
-          </div>
         </CardContent>
 
         {/* Footer */}
         <CardFooter className="p-4 pt-0 flex items-center justify-between gap-2">
           <div>
             <div className="text-xl font-black text-gray-900">
-              ${product.price.toFixed(2)}
+              {formatCurrency(product.price)}
             </div>
             {product.originalPrice && (
               <div className="text-xs text-muted-foreground line-through">
-                ${product.originalPrice.toFixed(2)}
+                {formatCurrency(product.originalPrice)}
               </div>
             )}
           </div>

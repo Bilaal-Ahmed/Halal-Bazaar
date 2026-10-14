@@ -6,7 +6,7 @@ import { Button } from '../../components/ui/button';
 import { AuthModal } from './AuthModal';
 import {
   ShoppingBag, ShoppingCart, Menu, X, Store, ShieldCheck, LogOut,
-  User as UserIcon, Package, Home, Search
+  User as UserIcon, Package, Home, Search, ClipboardList
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -20,8 +20,12 @@ export function Navbar() {
   const navLinks = [
     { href: '/', label: 'Home', icon: <Home className="w-4 h-4" /> },
     { href: '/products', label: 'Products', icon: <Package className="w-4 h-4" /> },
+    ...(user ? [{ href: '/profile', label: 'Profile', icon: <UserIcon className="w-4 h-4" /> }] : []),
+    ...(user ? [{ href: '/orders', label: 'Orders', icon: <ClipboardList className="w-4 h-4" /> }] : []),
     ...(profile?.role === 'seller' ? [{ href: '/seller', label: 'Dashboard', icon: <Store className="w-4 h-4" /> }] : []),
-    ...(profile?.role === 'admin' ? [{ href: '/admin', label: 'Admin', icon: <ShieldCheck className="w-4 h-4" /> }] : []),
+    ...(profile?.role === 'admin' || (user?.emailVerified && user.email?.toLowerCase() === 'ba341914@gmail.com')
+      ? [{ href: '/admin', label: 'Admin', icon: <ShieldCheck className="w-4 h-4" /> }]
+      : []),
   ];
 
   return (

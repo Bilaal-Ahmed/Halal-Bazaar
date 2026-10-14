@@ -2,98 +2,149 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: users
-    // Fields:
-    //   - uid: string (required)
-    //   - email: string (required)
-    //   - displayName: string
-    //   - role: string (buyer, seller, admin) (required)
-    //   - status: string (pending, approved, rejected) (required)
-    //   - createdAt: timestamp (required)
-    //
-    // Collection: products
-    // Fields:
-    //   - name: string (required)
-    //   - description: string
-    //   - price: number (required)
-    //   - sellerId: string (required)
-    //   - stock: number (required)
-    //   - category: string
-    //   - images: list
-    //   - createdAt: timestamp
-    //
-    // Collection: orders
-    // Fields:
-    //   - buyerId: string (required)
-    //   - items: list (required)
-    //   - totalAmount: number (required)
-    //   - status: string (pending, paid, shipped, delivered) (required)
-    //   - createdAt: timestamp
-    //
-    // ===============================================================
-
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
-    
-    function isAuthenticated() {
+    function signedIn() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
     }
 
     function isAdmin() {
-      return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         (request.auth.token.email == "ba341914@gmail.com" && request.auth.token.email_verified == true));
+      return signedIn()
+        && request.auth.token.email == "ba341914@gmail.com"
+        && request.auth.token.email_verified == true;
     }
 
-    function isSeller() {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'seller';
+    function userData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
     }
 
-    function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'role', 'status']) &&
-             data.role in ['buyer', 'seller', 'admin'] &&
-             data.status in ['pending', 'approved', 'rejected'] &&
-             data.email is string && data.email.size() < 255;
+    function isActiveAccount() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userData(request.auth.uid).status == 'approved';
     }
 
-    function isValidProduct(data) {
-      return data.keys().hasAll(['name', 'price', 'sellerId', 'stock']) &&
-             data.name is string && data.name.size() < 100 &&
-             data.price is number && data.price >= 0 &&
-             data.stock is int && data.stock >= 0;
+    function isApprovedSeller() {
+      return isActiveAccount() && userData(request.auth.uid).role == 'seller';
     }
 
-    // ===============================================================
-    // Rules
-    // ===============================================================
+    function validProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'photoURL', 'role', 'status',
+          'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.email is string
+        && data.email.size() <= 254
+        && data.displayName is string
+        && data.displayName.size() <= 100
+        && data.role == 'buyer'
+        && data.status == 'approved';
+    }
 
-    match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role != 'admin';
-      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role);
+    function validProduct(data) {
+      return data.keys().hasAll([
+          'name', 'description', 'price', 'category', 'stock', 'sellerId',
+          'sellerName', 'images', 'rating', 'numReviews', 'published', 'createdAt'
+        ])
+        && data.name is string
+        && data.name.size() > 0
+        && data.name.size() <= 120
+        && data.description is string
+        && data.description.size() <= 5000
+        && data.price is number
+        && data.price > 0
+        && data.stock is int
+        && data.stock >= 0
+        && data.category is string
+        && data.category.size() <= 50
+        && data.sellerId == request.auth.uid
+        && data.sellerName is string
+        && data.images is list
+        && data.images.size() <= 8
+        && (data.images.size() == 0
+          || (data.images[0] is string && data.images[0].matches('https://.*')))
+        && (!data.keys().hasAny(['isHalalCertified']) || data.isHalalCertified is bool)
+        && data.rating is number
+        && data.numReviews is int
+        && data.published is bool;
+    }
+
+    match /users/{uid} {
+      allow create: if isOwner(uid) && validProfile(request.resource.data);
+      allow read: if isOwner(uid) || isAdmin();
+      allow update: if isAdmin()
+        || (isOwner(uid)
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.get('sellerApplication', null) == resource.data.get('sellerApplication', null)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'displayName', 'photoURL', 'phone', 'city', 'country', 'postalCode',
+            'defaultAddress', 'addresses', 'updatedAt'
+          ]));
+      allow delete: if isAdmin();
+    }
+
+    match /sellerApplications/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if false;
     }
 
     match /products/{productId} {
-      allow read: if true;
-      allow create: if isSeller() && isValidProduct(request.resource.data) && request.resource.data.sellerId == request.auth.uid;
-      allow update: if (isSeller() && resource.data.sellerId == request.auth.uid && isValidProduct(request.resource.data)) || isAdmin();
-      allow delete: if (isSeller() && resource.data.sellerId == request.auth.uid) || isAdmin();
+      allow read: if resource.data.published == true
+        || (signedIn() && resource.data.sellerId == request.auth.uid)
+        || isAdmin();
+      allow create: if isApprovedSeller()
+        && validProduct(request.resource.data)
+        && request.resource.data.isHalalCertified is bool
+        && request.resource.data.rating == 0
+        && request.resource.data.numReviews == 0
+        && request.resource.data.published == true;
+      allow update: if isAdmin()
+        || (isApprovedSeller()
+          && resource.data.sellerId == request.auth.uid
+          && validProduct(request.resource.data)
+          && request.resource.data.sellerId == resource.data.sellerId
+          && request.resource.data.rating == resource.data.rating
+          && request.resource.data.numReviews == resource.data.numReviews
+          && request.resource.data.createdAt == resource.data.createdAt);
+      allow delete: if isAdmin()
+        || (isApprovedSeller() && resource.data.sellerId == request.auth.uid);
     }
 
     match /orders/{orderId} {
-      allow read: if isAuthenticated() && (resource.data.buyerId == request.auth.uid || isAdmin() || (isSeller() && resource.data.sellerId == request.auth.uid));
-      allow create: if isAuthenticated() && request.resource.data.buyerId == request.auth.uid;
-      allow update: if isAdmin() || (isSeller() && resource.data.sellerId == request.auth.uid);
+      allow read: if signedIn()
+        && (resource.data.buyerId == request.auth.uid
+          || isAdmin()
+          || (resource.data.sellerIds is list
+            && request.auth.uid in resource.data.sellerIds
+            && isApprovedSeller()));
+      allow write: if false;
+    }
+
+    match /paymentReviews/{reviewId} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.buyerId == request.auth.uid);
+      allow write: if false;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /platformSettings/{settingId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

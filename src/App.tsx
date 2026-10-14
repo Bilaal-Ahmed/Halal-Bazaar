@@ -11,6 +11,10 @@ import Products from './pages/Products';
 import Cart from './pages/Cart';
 import SellerDashboard from './pages/SellerDashboard';
 import AdminPanel from './pages/AdminPanel';
+import ProfilePage from './pages/ProfilePage';
+import { ProtectedRoute } from './components/ProtectedRoute';
+import OrdersPage from './pages/OrdersPage';
+import ProductDetails from './pages/ProductDetails';
 
 export default function App() {
   return (
@@ -24,9 +28,13 @@ export default function App() {
                 <Routes>
                   <Route path="/" element={<Home />} />
                   <Route path="/products" element={<Products />} />
+                  <Route path="/products/:productId" element={<ProductDetails />} />
                   <Route path="/cart" element={<Cart />} />
-                  <Route path="/seller" element={<SellerDashboard />} />
-                  <Route path="/admin" element={<AdminPanel />} />
+                  <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+                  <Route path="/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
+                  <Route path="/orders/:orderId" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
+                  <Route path="/seller" element={<ProtectedRoute role="seller"><SellerDashboard /></ProtectedRoute>} />
+                  <Route path="/admin" element={<ProtectedRoute role="admin"><AdminPanel /></ProtectedRoute>} />
                 </Routes>
               </main>
               <Footer />

@@ -11,35 +11,36 @@
 
 <br/>
 
-> **Pakistan's #1 Halal Multi-Vendor E-Commerce Platform** — Connecting conscious shoppers with verified halal sellers. Built with React 19, Firebase, TypeScript, and an AI-powered chatbot.
+> **Halal-Bazaar** — A multi-vendor marketplace for buyers and seller-submitted halal product listings. Built with React 19, Firebase, TypeScript, and an AI-powered chatbot.
 
 ---
 
 ## ✨ Features
 
 ### 🛍️ Shopping Experience
-- **Premium Homepage** — Animated hero, stats strip, category grid, featured products, testimonials, newsletter
-- **Product Catalog** — Advanced filtering (category, price range, search), multiple sort options
-- **Smart Cart System** — Persistent cart with localStorage, quantity controls, real-time total calculation
-- **Sample Products** — 6 beautifully curated sample products with Unsplash photography
-- **Halal Certification Badge** — Every certified product is clearly marked
+- **Product Catalog** — Search, category and price filters, sorting, published listings, and product details
+- **Cart and Checkout** — localStorage cart, server-validated pricing/stock, idempotent order creation, COD, and configured manual bank transfer
+- **Listing claims** — Sellers may mark listings as halal certified; this application does not independently verify certificates
+- **Order tracking** — Buyer order history/details and seller fulfillment status updates
 
 ### 🔐 Authentication
 - **Google OAuth** — One-click sign-in with Google account
-- **Email OTP (Passwordless)** — Firebase Email Link authentication — enter your Gmail, click the magic link, signed in!
+- **Email and password** — Firebase email/password registration and sign-in with verification and password reset
+- **Email link** — Optional Firebase passwordless sign-in
 - **Role-Based Access** — Buyer, Seller, and Admin roles with protected routes
 
 ### 🏪 Seller Dashboard
-- **Product Management** — Add, view, and remove product listings in real-time
+- **Seller onboarding** — Seller application and admin approval/rejection with a reason
+- **Product management** — Approved sellers manage published listings and inventory
 - **Category Tags** — Assign products to 6 categories with icon selectors
-- **Halal Certification Toggle** — Mark products as halal-certified
-- **Live Sales Stats** — Track product count, revenue estimates, and ratings
+- **Seller profile and fulfillment** — Manage store information and progress orders
+- **Order value** — Gross order value is calculated from actual orders; no review/rating feature is currently offered
 
 ### 🛡️ Admin Panel
 - **User Management** — View all registered users with stats overview
-- **Role Promotion** — Promote users to seller/admin via dropdown
-- **Approval Workflow** — Approve or reject user accounts with one click
-- **Filter Tabs** — Filter users by role (all/buyer/seller/admin)
+- **Seller application review** — Approve/reject requests, requiring a rejection reason
+- **Moderation** — Suspend/reactivate users, publish/unpublish listings, and review bank-transfer payments
+- **Audit trail** — Sensitive admin changes are recorded server-side
 
 ### 🤖 AI ChatBot
 - **Gemini-Powered** — Built with Google Gemini AI
@@ -73,36 +74,16 @@
 ```
 Halal-Bazaar/
 ├── src/
-│   ├── components/
-│   │   ├── AuthModal.tsx       # Google + Email OTP login modal
-│   │   ├── ChatBot.tsx         # AI-powered Gemini chatbot
-│   │   ├── ErrorBoundary.tsx   # Global error handler
-│   │   ├── Footer.tsx          # Dark premium footer
-│   │   ├── Navbar.tsx          # Sticky nav with cart badge & mobile menu
-│   │   └── ProductCard.tsx     # Enhanced product card with halal badge
-│   ├── contexts/
-│   │   ├── AuthContext.tsx     # Firebase auth + Email OTP context
-│   │   └── CartContext.tsx     # Cart state with localStorage persistence
-│   ├── lib/
-│   │   └── gemini.ts           # Google Gemini AI integration
-│   ├── pages/
-│   │   ├── Home.tsx            # Full landing page with 7 sections
-│   │   ├── Products.tsx        # Product catalog with filters
-│   │   ├── Cart.tsx            # Shopping cart with order summary
-│   │   ├── SellerDashboard.tsx # Seller product management
-│   │   └── AdminPanel.tsx      # Admin user management
-│   ├── App.tsx                 # Root app with all routes & providers
-│   ├── firebase.ts             # Firebase initialization
-│   ├── index.css               # Design system (Tailwind v4 + custom)
-│   ├── main.tsx                # React entry point
-│   └── types.ts                # TypeScript types + sample data
-├── components/ui/              # shadcn/ui base-nova components
-├── lib/utils.ts                # cn() utility helper
-├── server.ts                   # Express server with Vite middleware
-├── firebase-applet-config.json # Firebase project config
-├── firebase-blueprint.json     # Firestore security rules blueprint
-├── firestore.rules             # Firestore security rules
-├── vite.config.ts              # Vite configuration
+│   ├── components/              # Shared UI, auth, navigation, product cards
+│   ├── contexts/                # Firebase auth and cart state
+│   ├── lib/                     # API client, currency, Firebase and utilities
+│   ├── pages/                   # Buyer, seller and administrator screens
+│   ├── App.tsx                  # Routes and providers
+│   └── types.ts                 # Marketplace data types
+├── components/ui/               # Shared UI primitives
+├── server.ts                    # Express API and Vite middleware
+├── firebase.json                # Rules deployment configuration
+├── firestore.rules              # Client Firestore access policy
 └── package.json
 ```
 
@@ -127,60 +108,78 @@ npm install
 ```
 
 ### 3. Configure environment variables
-```bash
-cp .env.example .env
-```
+Copy `.env.example` to `.env` (PowerShell: `Copy-Item .env.example .env`; macOS/Linux: `cp .env.example .env`).
 
 Edit `.env`:
 ```env
 GEMINI_API_KEY="your_gemini_api_key_here"
 APP_URL="http://localhost:3000"
+FIREBASE_PROJECT_ID="your-existing-firebase-project-id"
+FIRESTORE_DATABASE_ID=""
+GOOGLE_APPLICATION_CREDENTIALS="C:/secure/path/to/firebase-admin-service-account.json"
+ADMIN_EMAILS="ba341914@gmail.com"
+ORDER_CURRENCY="USD"
+ORDER_TAX_RATE="0.05"
+VITE_ORDER_CURRENCY="USD"
+# BANK_TRANSFER_INSTRUCTIONS="Bank/account details for manual transfer"
 ```
+
+`FIRESTORE_DATABASE_ID` may be left empty; the server then reads the existing database ID from `firebase-applet-config.json`. Use a server-only Google Application Default Credential or a service account stored outside the repository. Never prefix Admin SDK settings with `VITE_`, put service-account JSON in the client config, or commit credentials. `ADMIN_EMAILS` is checked by Express after Firebase ID-token verification; it is server-only and defaults to the original verified administrator account above. `VITE_ADMIN_EMAILS` is not an authorization control and is not used.
+
+Manual bank transfer is disabled until `BANK_TRANSFER_INSTRUCTIONS` is set on the server; those instructions are shown to buyers, and transfers remain pending until an administrator reviews them. JazzCash and Easypaisa are deliberately unavailable until you have the official merchant integration specifications, credentials, callback configuration, and a verified signature-validation implementation. No real gateway payment is currently processed. Firebase Storage is not configured; product/store images must use externally hosted image URLs.
+
+To add another administrator, configure the verified account email in server-only `ADMIN_EMAILS` and provision that user's Firestore profile with `role: "admin"` using a trusted Firebase Admin SDK process. Do not use a browser environment variable or client write to grant the role.
 
 ### 4. Configure Firebase
 
-Edit `firebase-applet-config.json` with your Firebase project credentials:
-```json
-{
-  "apiKey": "YOUR_API_KEY",
-  "authDomain": "YOUR_PROJECT.firebaseapp.com",
-  "projectId": "YOUR_PROJECT_ID",
-  "storageBucket": "YOUR_PROJECT.appspot.com",
-  "messagingSenderId": "YOUR_SENDER_ID",
-  "appId": "YOUR_APP_ID",
-  "firestoreDatabaseId": "(default)"
-}
-```
+Keep the checked-in `firebase-applet-config.json` pointed at the existing Firebase project and named Firestore database. Do not replace its project or database with the `(default)` database. The client config identifies a Firebase app and is public; access control is provided by the rules below, and privileged operations use the Admin SDK on the server. Keep `ORDER_CURRENCY` and `VITE_ORDER_CURRENCY` equal to the currency used by the catalog.
 
 ### 5. Enable Firebase Services
 
 In [Firebase Console](https://console.firebase.google.com/):
 1. **Authentication** → Sign-in methods → Enable:
-   - ✅ Google
-   - ✅ Email/Password → Email link (passwordless sign-in)
-2. **Firestore Database** → Create database in production mode
+   - Google
+   - Email/Password
+   - Email link only if you intend to use the optional passwordless sign-in
+2. **Firestore Database** → Keep the currently configured database and its data
 3. **Authorized Domains** → Add `localhost`
 
-### 6. Run the development server
+### 6. Deploy Firestore security rules
+
+The rules deny direct client order creation/updates and prevent changes to user role, account status, and seller application status. Order creation, seller onboarding decisions, payment review, and admin operations run through authenticated API routes using Firebase Admin SDK.
+
+Install/configure the Firebase CLI for the existing project and deploy only the rules:
+```bash
+firebase login
+firebase use YOUR_EXISTING_FIREBASE_PROJECT_ID
+firebase deploy --only firestore:rules
+```
+
+Verify the selected project and database before deployment. The repository does not auto-deploy rules or mutate production data.
+
+### 7. Run the development server
+
 ```bash
 npm run dev
 ```
 
 Open **http://localhost:3000** 🎉
 
+The API needs server-side Firebase Admin credentials to perform checkout and administrative operations. If credentials are unavailable, privileged endpoints fail closed; browse-only client functionality can still load.
+
 ---
 
-## 🔑 Email OTP Login
+## 🔑 Email Link Login
 
-Halal-Bazaar supports passwordless sign-in via Gmail:
+Halal-Bazaar supports optional passwordless sign-in via Firebase email link:
 
 1. Click **Sign In** in the navbar
-2. Select **"Sign in with Email OTP"**
-3. Enter your Gmail address
-4. Firebase sends a magic link to your inbox
+2. Select **"Sign in with Email Link"**
+3. Enter your email address
+4. Firebase sends a sign-in link to your inbox
 5. Click the link — you're signed in automatically!
 
-> **Note:** Firebase must have Email Link authentication enabled AND your domain must be in the authorized domains list.
+> **Note:** Firebase must have Email Link authentication enabled and your domain must be in the authorized domains list.
 
 ---
 
@@ -212,10 +211,30 @@ npm run lint     # TypeScript type checking
 
 ## 🔒 Security
 
-- Firestore rules restrict read/write based on user authentication
-- Email link tokens expire after 10 minutes
-- Role-based access: Admin and Seller pages are protected
-- All Firebase credentials excluded from version control via `.gitignore`
+- Firebase ID tokens are verified by Firebase Admin SDK for protected API endpoints.
+- Server operations enforce active-account, verified-email, approved-seller, and administrator checks.
+- Browser configuration and all `VITE_*` variables are public; never use them for secrets or authorization.
+- Firestore rules prevent client-side role promotion, payment-success writes, order forgery, and access to another buyer's private profile/orders.
+- Order prices, tax, and stock are recalculated/reserved transactionally from Firestore by the server.
+- Seller application decisions and payment/user moderation writes create audit records.
+- Service-account credential files and `.env` files are excluded from version control.
+- JazzCash/Easypaisa do not accept or process payment callbacks yet. No provider-specific request format or signature scheme is assumed without official merchant documentation and credentials.
+
+## 🧪 Manual smoke tests
+
+Run `npm run lint` and `npm run build` first, then use two browser accounts (buyer and seller) plus the configured administrator:
+
+1. Create a buyer account with email/password, confirm the verification email, sign in, edit the profile, add an address, and request a password reset.
+2. As a buyer, submit a seller application. Confirm the dashboard remains unavailable and application status is pending.
+3. As the administrator, open Admin Console, reject the application with a reason, confirm that status/reason appear to the buyer, then approve a new/re-submitted application.
+4. As the approved seller, save store details, create and edit a listing, adjust inventory, hide/publish it, and delete an owned listing. Confirm buyers cannot see hidden listings.
+5. As a verified buyer, add a currently published item to cart and place a COD order. Confirm the server-created order amount and remaining stock; try submitting a forged price or marking the order paid directly in Firestore and confirm the rules reject it.
+6. As the seller, process and ship the order, then confirm the buyer sees fulfillment updates in order history/details.
+7. Place a manual bank-transfer order with a reference. Confirm it remains pending review until admin approves/rejects it; an unverified buyer cannot submit an order.
+8. Suspend the buyer from Admin Console and confirm new checkout/API operations are denied; reactivate to restore access.
+9. Call `/api/payments/jazzcash/initiate` or `/api/payments/easypaisa/initiate` for an order and confirm the API responds unavailable until an official provider integration is configured. No payment should show as paid from a client-side request.
+
+For rules validation, use the Firebase Emulator Suite or a non-production Firebase project before deploying to the existing production database. The smoke-test deployment assumes that the target project and the named Firestore database in `firebase.json` are the intended ones; verify both before running any deployment command.
 
 ---
 

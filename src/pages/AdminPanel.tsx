@@ -1,194 +1,259 @@
-import React, { useEffect, useState } from 'react';
-import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
-import { UserProfile } from '../types';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '../../components/ui/button';
-import { Badge } from '../../components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { apiRequest } from '../lib/api';
 import { toast } from 'sonner';
-import { Users, ShieldCheck, Store, User, CheckCircle, XCircle, Clock, BarChart3 } from 'lucide-react';
+import { RefreshCw, ShieldCheck, Store, Users, Package, ClipboardList, CreditCard } from 'lucide-react';
+
+type AdminRecord = Record<string, any> & { id: string };
+interface AdminData {
+  users: AdminRecord[];
+  applications: AdminRecord[];
+  products: AdminRecord[];
+  orders: AdminRecord[];
+  paymentReviews: AdminRecord[];
+}
+
+type AdminTab = 'applications' | 'users' | 'products' | 'orders' | 'payments';
+
+const emptyData: AdminData = { users: [], applications: [], products: [], orders: [], paymentReviews: [] };
 
 export default function AdminPanel() {
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [filter, setFilter] = useState<'all' | 'buyer' | 'seller' | 'admin'>('all');
+  const [data, setData] = useState<AdminData>(emptyData);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [tab, setTab] = useState<AdminTab>('applications');
+  const [filter, setFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [busyId, setBusyId] = useState('');
 
-  useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
-      const u = snapshot.docs.map(doc => doc.data() as UserProfile);
-      setUsers(u);
-    });
-    return () => unsubscribe();
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setData(await apiRequest<AdminData>('/api/admin/data'));
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Could not load admin data.';
+      setError(message);
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const handleUpdateRole = async (uid: string, role: string) => {
+  useEffect(() => { void load(); }, [load]);
+
+  const filteredUsers = useMemo(() => data.users.filter(user => {
+    const value = `${user.displayName || ''} ${user.email || ''} ${user.role || ''}`.toLowerCase();
+    return value.includes(filter.toLowerCase()) && (statusFilter === 'all' || user.status === statusFilter);
+  }), [data.users, filter, statusFilter]);
+
+  const filteredApplications = useMemo(() => data.applications.filter(application => {
+    return `${application.storeName || ''} ${application.email || ''} ${application.status || ''}`.toLowerCase().includes(filter.toLowerCase())
+      && (statusFilter === 'all' || application.status === statusFilter);
+  }), [data.applications, filter, statusFilter]);
+
+  const filteredProducts = useMemo(() => data.products.filter(product => {
+    return `${product.name || ''} ${product.sellerName || ''} ${product.category || ''}`.toLowerCase().includes(filter.toLowerCase())
+      && (statusFilter === 'all' || (statusFilter === 'published' ? product.published === true : product.published !== true));
+  }), [data.products, filter, statusFilter]);
+
+  const filteredOrders = useMemo(() => data.orders.filter(order => {
+    return `${order.id} ${order.buyerEmail || ''} ${order.status || ''} ${order.paymentStatus || ''}`.toLowerCase().includes(filter.toLowerCase())
+      && (statusFilter === 'all' || order.paymentStatus === statusFilter || order.status === statusFilter);
+  }), [data.orders, filter, statusFilter]);
+
+  const decideApplication = async (uid: string, decision: 'approved' | 'rejected') => {
+    let reason = '';
+    if (decision === 'rejected') {
+      const input = window.prompt('Provide a reason for rejection:');
+      if (input === null) return;
+      reason = input.trim();
+      if (!reason) {
+        toast.error('A rejection reason is required.');
+        return;
+      }
+    }
+    setBusyId(uid);
     try {
-      await updateDoc(doc(db, 'users', uid), { role });
-      toast.success(`User role updated to ${role}`);
-    } catch {
-      toast.error('Failed to update role');
+      await apiRequest(`/api/admin/seller-applications/${encodeURIComponent(uid)}/decision`, {
+        method: 'POST',
+        body: JSON.stringify({ decision, reason }),
+      });
+      toast.success(`Seller application ${decision}.`);
+      await load();
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : 'Could not update application.');
+    } finally {
+      setBusyId('');
     }
   };
 
-  const handleUpdateStatus = async (uid: string, status: string) => {
+  const setAccountStatus = async (uid: string, status: 'approved' | 'suspended' | 'restricted') => {
+    setBusyId(uid);
     try {
-      await updateDoc(doc(db, 'users', uid), { status });
-      toast.success(`User status updated to ${status}`);
-    } catch {
-      toast.error('Failed to update status');
+      await apiRequest(`/api/admin/users/${encodeURIComponent(uid)}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status }),
+      });
+      toast.success(`Account status set to ${status}.`);
+      await load();
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : 'Could not update account status.');
+    } finally {
+      setBusyId('');
     }
   };
 
-  const filteredUsers = filter === 'all' ? users : users.filter(u => u.role === filter);
-
-  const stats = {
-    total: users.length,
-    buyers: users.filter(u => u.role === 'buyer').length,
-    sellers: users.filter(u => u.role === 'seller').length,
-    pending: users.filter(u => u.status === 'pending').length,
+  const setProductPublished = async (id: string, published: boolean) => {
+    setBusyId(id);
+    try {
+      await apiRequest(`/api/admin/products/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ published }),
+      });
+      toast.success(published ? 'Listing published.' : 'Listing unpublished.');
+      await load();
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : 'Could not update listing.');
+    } finally {
+      setBusyId('');
+    }
   };
 
-  const statusColor = (status: string) => {
-    if (status === 'approved') return 'bg-green-100 text-green-700';
-    if (status === 'rejected') return 'bg-red-100 text-red-600';
-    return 'bg-yellow-100 text-yellow-700';
+  const reviewPayment = async (id: string, decision: 'approve_transfer' | 'reject_transfer' | 'cash_received') => {
+    setBusyId(id);
+    try {
+      await apiRequest(`/api/admin/orders/${encodeURIComponent(id)}/payment-review`, {
+        method: 'POST',
+        body: JSON.stringify({ decision }),
+      });
+      toast.success('Payment review saved.');
+      await load();
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : 'Could not review payment.');
+    } finally {
+      setBusyId('');
+    }
   };
 
-  const roleIcon = (role: string) => {
-    if (role === 'admin') return <ShieldCheck className="w-3.5 h-3.5" />;
-    if (role === 'seller') return <Store className="w-3.5 h-3.5" />;
-    return <User className="w-3.5 h-3.5" />;
-  };
+  const tabs: Array<{ id: AdminTab; label: string; icon: React.ReactNode; count: number }> = [
+    { id: 'applications', label: 'Seller applications', icon: <Store className="w-4 h-4" />, count: data.applications.filter(item => item.status === 'pending').length },
+    { id: 'users', label: 'Users', icon: <Users className="w-4 h-4" />, count: data.users.length },
+    { id: 'products', label: 'Listings', icon: <Package className="w-4 h-4" />, count: data.products.length },
+    { id: 'orders', label: 'Orders', icon: <ClipboardList className="w-4 h-4" />, count: data.orders.length },
+    { id: 'payments', label: 'Payments', icon: <CreditCard className="w-4 h-4" />, count: data.orders.filter(order => order.paymentStatus === 'pending_review' || order.paymentStatus === 'unpaid').length },
+  ];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-black">Admin Panel</h1>
-        <p className="text-muted-foreground mt-1">Manage users, roles, and platform settings</p>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6">
+      <div className="flex flex-col md:flex-row justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-black flex items-center gap-2"><ShieldCheck className="w-7 h-7 text-primary" /> Admin Console</h1>
+          <p className="text-muted-foreground mt-1">Manage onboarding, users, listings, orders, and manual payment reviews.</p>
+        </div>
+        <Button variant="outline" onClick={() => void load()} disabled={loading} className="gap-2 self-start">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+        </Button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { title: 'Total Users', value: stats.total, icon: <Users className="w-5 h-5" />, color: 'bg-blue-50 text-blue-600' },
-          { title: 'Buyers', value: stats.buyers, icon: <User className="w-5 h-5" />, color: 'bg-purple-50 text-purple-600' },
-          { title: 'Sellers', value: stats.sellers, icon: <Store className="w-5 h-5" />, color: 'bg-green-50 text-green-600' },
-          { title: 'Pending Review', value: stats.pending, icon: <Clock className="w-5 h-5" />, color: 'bg-yellow-50 text-yellow-600' },
-        ].map(s => (
-          <Card key={s.title} className="border-gray-100 shadow-sm">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground">{s.title}</CardTitle>
-              <div className={`${s.color} p-2 rounded-xl`}>{s.icon}</div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-black">{s.value}</div>
-            </CardContent>
-          </Card>
+      {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
+
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {tabs.map(item => (
+          <button key={item.id} onClick={() => { setTab(item.id); setStatusFilter('all'); }} className={`flex items-center justify-between rounded-xl border p-3 text-left ${tab === item.id ? 'border-primary bg-primary/5' : 'bg-white'}`}>
+            <span className="flex items-center gap-2 text-sm font-semibold">{item.icon}{item.label}</span>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs">{item.count}</span>
+          </button>
         ))}
       </div>
 
-      {/* User Table */}
-      <Card className="border-gray-100 shadow-sm">
-        <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <CardTitle className="flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-primary" /> User Management
-          </CardTitle>
-          {/* Filter tabs */}
-          <div className="flex gap-2">
-            {(['all', 'buyer', 'seller', 'admin'] as const).map(role => (
-              <button
-                key={role}
-                onClick={() => setFilter(role)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold capitalize transition-all ${
-                  filter === role ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {role}
-              </button>
-            ))}
+      <Card>
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <CardTitle>{tabs.find(item => item.id === tab)?.label}</CardTitle>
+          <div className="flex w-full flex-col sm:w-auto sm:flex-row gap-2">
+            <select value={statusFilter} onChange={event => setStatusFilter(event.target.value)} className="h-9 rounded-md border bg-background px-3 text-sm">
+              <option value="all">All statuses</option>
+              {tab === 'applications' && <><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></>}
+              {tab === 'users' && <><option value="approved">Active</option><option value="suspended">Suspended</option><option value="restricted">Restricted</option></>}
+              {tab === 'products' && <><option value="published">Published</option><option value="hidden">Hidden</option></>}
+              {(tab === 'orders' || tab === 'payments') && <><option value="pending">Order pending</option><option value="shipped">Shipped</option><option value="pending_review">Payment review</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="rejected">Rejected</option></>}
+            </select>
+            <Input value={filter} onChange={event => setFilter(event.target.value)} placeholder="Filter current list…" className="sm:max-w-xs" />
           </div>
         </CardHeader>
-        <CardContent className="p-0">
-          {filteredUsers.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
-              <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>No users found</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b">
-                  <tr>
-                    <th className="text-left py-3 px-4 font-semibold text-muted-foreground">User</th>
-                    <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Role</th>
-                    <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Status</th>
-                    <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {filteredUsers.map(user => (
-                    <tr key={user.uid} className="hover:bg-gray-50 transition-colors">
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-bold shrink-0">
-                            {user.displayName?.[0]?.toUpperCase() || '?'}
-                          </div>
-                          <div>
-                            <div className="font-semibold">{user.displayName}</div>
-                            <div className="text-xs text-muted-foreground">{user.email}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4">
-                        <select
-                          value={user.role}
-                          onChange={e => handleUpdateRole(user.uid, e.target.value)}
-                          className="text-xs font-semibold border border-gray-200 rounded-lg px-2 py-1 bg-white capitalize cursor-pointer hover:border-primary/50 transition-colors"
-                        >
-                          <option value="buyer">Buyer</option>
-                          <option value="seller">Seller</option>
-                          <option value="admin">Admin</option>
-                        </select>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className={`inline-flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-full ${statusColor(user.status)}`}>
-                          {user.status === 'approved' && <CheckCircle className="w-3 h-3" />}
-                          {user.status === 'rejected' && <XCircle className="w-3 h-3" />}
-                          {user.status === 'pending' && <Clock className="w-3 h-3" />}
-                          {user.status}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex gap-2">
-                          {user.status !== 'approved' && (
-                            <Button
-                              id={`approve-${user.uid}`}
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-xs text-green-600 border-green-200 hover:bg-green-50"
-                              onClick={() => handleUpdateStatus(user.uid, 'approved')}
-                            >
-                              Approve
-                            </Button>
-                          )}
-                          {user.status !== 'rejected' && (
-                            <Button
-                              id={`reject-${user.uid}`}
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-xs text-red-500 border-red-200 hover:bg-red-50"
-                              onClick={() => handleUpdateStatus(user.uid, 'rejected')}
-                            >
-                              Reject
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        <CardContent>
+          {loading ? <p className="py-10 text-center text-muted-foreground">Loading admin records…</p> : null}
+          {!loading && tab === 'applications' && (
+            filteredApplications.length ? <div className="space-y-3">
+              {filteredApplications.map(application => (
+                <div key={application.id} className="rounded-xl border p-4">
+                  <div className="flex flex-col md:flex-row md:justify-between gap-4">
+                    <div>
+                      <h3 className="font-bold">{application.storeName} <span className="text-xs font-normal text-muted-foreground">· {application.status}</span></h3>
+                      <p className="text-sm text-muted-foreground">{application.email} · {application.contactPhone} · {application.city}</p>
+                      <p className="mt-2 text-sm">{application.description}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{application.businessAddress}</p>
+                      {application.reason && <p className="mt-2 text-sm text-red-700">Decision reason: {application.reason}</p>}
+                    </div>
+                    {application.status === 'pending' && <div className="flex gap-2 self-start">
+                      <Button size="sm" disabled={busyId === application.id} onClick={() => void decideApplication(application.id, 'approved')}>Approve</Button>
+                      <Button size="sm" variant="destructive" disabled={busyId === application.id} onClick={() => void decideApplication(application.id, 'rejected')}>Reject</Button>
+                    </div>}
+                  </div>
+                </div>
+              ))}
+            </div> : <p className="py-10 text-center text-muted-foreground">No matching applications.</p>
+          )}
+          {!loading && tab === 'users' && (
+            filteredUsers.length ? <div className="overflow-x-auto"><table className="w-full text-sm">
+              <thead><tr className="border-b text-left text-muted-foreground"><th className="p-2">User</th><th className="p-2">Role</th><th className="p-2">Status</th><th className="p-2">Action</th></tr></thead>
+              <tbody>{filteredUsers.map(user => <tr key={user.id} className="border-b">
+                <td className="p-2"><strong>{user.displayName || 'User'}</strong><div className="text-xs text-muted-foreground">{user.email}</div></td>
+                <td className="p-2 capitalize">{user.role}</td>
+                <td className="p-2 capitalize">{user.status}</td>
+                <td className="p-2">{user.role !== 'admin' && <Button size="sm" variant={user.status === 'suspended' ? 'outline' : 'destructive'} disabled={busyId === user.id} onClick={() => void setAccountStatus(user.id, user.status === 'suspended' ? 'approved' : 'suspended')}>{user.status === 'suspended' ? 'Reactivate' : 'Suspend'}</Button>}</td>
+              </tr>)}</tbody>
+            </table></div> : <p className="py-10 text-center text-muted-foreground">No matching users.</p>
+          )}
+          {!loading && tab === 'products' && (
+            filteredProducts.length ? <div className="overflow-x-auto"><table className="w-full text-sm">
+              <thead><tr className="border-b text-left text-muted-foreground"><th className="p-2">Product</th><th className="p-2">Seller</th><th className="p-2">Price / stock</th><th className="p-2">Visibility</th><th className="p-2">Action</th></tr></thead>
+              <tbody>{filteredProducts.map(product => <tr key={product.id} className="border-b">
+                <td className="p-2 font-semibold">{product.name}<div className="text-xs text-muted-foreground">{product.category}</div></td>
+                <td className="p-2">{product.sellerName || product.sellerId}</td>
+                <td className="p-2">{product.currency || ''} {product.price} · {product.stock} in stock</td>
+                <td className="p-2">{product.published ? 'Published' : 'Hidden'}</td>
+                <td className="p-2"><Button size="sm" variant="outline" disabled={busyId === product.id} onClick={() => void setProductPublished(product.id, !product.published)}>{product.published ? 'Unpublish' : 'Publish'}</Button></td>
+              </tr>)}</tbody>
+            </table></div> : <p className="py-10 text-center text-muted-foreground">No matching listings.</p>
+          )}
+          {!loading && (tab === 'orders' || tab === 'payments') && (
+            filteredOrders.length ? <div className="space-y-3">
+              {filteredOrders.filter(order => tab === 'orders' || ['pending_review', 'unpaid', 'rejected'].includes(order.paymentStatus)).map(order => (
+                <div key={order.id} className="rounded-xl border p-4">
+                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                    <div>
+                      <p className="font-bold">Order {order.id}</p>
+                      <p className="text-sm text-muted-foreground">{order.buyerEmail} · {order.currency} {Number(order.totalAmount || 0).toFixed(2)}</p>
+                      <p className="text-sm capitalize">Fulfillment: {order.status} · Payment: {String(order.paymentMethod).replaceAll('_', ' ')} / {String(order.paymentStatus).replaceAll('_', ' ')}</p>
+                      {order.transferReference && <p className="text-xs text-muted-foreground">Transfer reference: {order.transferReference}</p>}
+                      <p className="text-xs text-muted-foreground">{(order.items || []).map((line: any) => `${line.product?.name || line.name} × ${line.quantity}`).join(', ')}</p>
+                    </div>
+                    {tab === 'payments' && <div className="flex flex-wrap gap-2">
+                      {order.paymentMethod === 'bank_transfer' && order.paymentStatus === 'pending_review' && <>
+                        <Button size="sm" disabled={busyId === order.id} onClick={() => void reviewPayment(order.id, 'approve_transfer')}>Approve transfer</Button>
+                        <Button size="sm" variant="destructive" disabled={busyId === order.id} onClick={() => void reviewPayment(order.id, 'reject_transfer')}>Reject transfer</Button>
+                      </>}
+                      {order.paymentMethod === 'cash_on_delivery' && order.paymentStatus === 'unpaid' &&
+                        <Button size="sm" disabled={busyId === order.id} onClick={() => void reviewPayment(order.id, 'cash_received')}>Confirm cash received</Button>}
+                      {order.paymentStatus === 'paid' && <span className="text-sm font-semibold text-green-700">Verified paid</span>}
+                    </div>}
+                  </div>
+                </div>
+              ))}
+            </div> : <p className="py-10 text-center text-muted-foreground">No matching orders.</p>
           )}
         </CardContent>
       </Card>

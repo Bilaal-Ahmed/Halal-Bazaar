@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingBag, Github, Twitter, Mail, MapPin, Phone, Heart, ShieldCheck } from 'lucide-react';
+import { ShoppingBag, Github, Twitter, Mail, MapPin, Phone, Heart, ShieldCheck, Linkedin } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { CATEGORIES } from '../types';
 
@@ -29,13 +29,13 @@ export function Footer() {
             </div>
             {/* Social */}
             <div className="flex gap-3 pt-1">
-              <a id="footer-twitter" href="#" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
-                <Twitter className="w-4 h-4" />
+              <a id="footer-linedIn" href="https://www.linkedin.com/in/bilal-ahmed-26513b296/" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
+                <Linkedin className="w-4 h-4" />
               </a>
-              <a id="footer-github" href="https://github.com/Ahmiii281" target="_blank" rel="noopener noreferrer" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
+              <a id="footer-github" href="https://github.com/Bilaal-Ahmed/Halal-Bazaar" target="_blank" rel="noopener noreferrer" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
                 <Github className="w-4 h-4" />
               </a>
-              <a id="footer-mail" href="mailto:bilalahmed@halalbazaar.com" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
+              <a id="footer-mail" href="mailto:mr.bilal.ahmed281@gmail.com" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
                 <Mail className="w-4 h-4" />
               </a>
             </div>
