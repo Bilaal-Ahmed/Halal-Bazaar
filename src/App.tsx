@@ -15,6 +15,8 @@ import ProfilePage from './pages/ProfilePage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import OrdersPage from './pages/OrdersPage';
 import ProductDetails from './pages/ProductDetails';
+import BuyerDashboard from './pages/BuyerDashboard';
+import { AboutPage, BlogPage, ContactPage, FaqPage, PrivacyPage, TermsPage } from './pages/InformationPages';
 
 export default function App() {
   return (
@@ -27,10 +29,18 @@ export default function App() {
               <main className="flex-grow">
                 <Routes>
                   <Route path="/" element={<Home />} />
+                  <Route path="/about" element={<AboutPage />} />
+                  <Route path="/blog" element={<BlogPage />} />
+                  <Route path="/blog/:slug" element={<BlogPage />} />
+                  <Route path="/contact" element={<ContactPage />} />
+                  <Route path="/faq" element={<FaqPage />} />
+                  <Route path="/privacy" element={<PrivacyPage />} />
+                  <Route path="/terms" element={<TermsPage />} />
                   <Route path="/products" element={<Products />} />
                   <Route path="/products/:productId" element={<ProductDetails />} />
                   <Route path="/cart" element={<Cart />} />
                   <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+                  <Route path="/dashboard" element={<ProtectedRoute><BuyerDashboard /></ProtectedRoute>} />
                   <Route path="/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
                   <Route path="/orders/:orderId" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
                   <Route path="/seller" element={<ProtectedRoute role="seller"><SellerDashboard /></ProtectedRoute>} />

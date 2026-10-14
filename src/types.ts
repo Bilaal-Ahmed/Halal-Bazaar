@@ -106,7 +106,7 @@ export const CATEGORIES = [
     slug: 'food',
     icon: '🥘',
     image: 'https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?w=600&q=80',
-    desc: 'Halal-certified fresh & packaged foods',
+    desc: 'Fresh and packaged food listings',
   },
   {
     name: 'Fashion',
@@ -120,7 +120,7 @@ export const CATEGORIES = [
     slug: 'beauty',
     icon: '✨',
     image: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?w=600&q=80',
-    desc: 'Natural & halal-certified cosmetics',
+    desc: 'Personal care and beauty listings',
   },
   {
     name: 'Electronics',

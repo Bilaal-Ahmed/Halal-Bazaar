@@ -1,9 +1,11 @@
 import React from 'react';
-import { ShoppingBag, Github, Twitter, Mail, MapPin, Phone, Heart, ShieldCheck, Linkedin } from 'lucide-react';
+import { ShoppingBag, Github, Mail, Heart } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { CATEGORIES } from '../types';
 
 export function Footer() {
+  const supportEmail = import.meta.env.VITE_SUPPORT_EMAIL?.trim();
+
   return (
     <footer className="bg-gray-950 text-gray-300">
       {/* Main footer content */}
@@ -21,23 +23,16 @@ export function Footer() {
               </span>
             </div>
             <p className="text-sm leading-relaxed text-gray-400">
-              Pakistan's trusted halal e-commerce marketplace. Connecting conscious shoppers with verified halal sellers since 2024.
+              A marketplace where independent sellers can share product listings and shoppers can discover and order from them.
             </p>
-            <div className="flex items-center gap-1 text-xs text-primary font-semibold">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              All products are Halal Certified
-            </div>
             {/* Social */}
             <div className="flex gap-3 pt-1">
-              <a id="footer-linedIn" href="https://www.linkedin.com/in/bilal-ahmed-26513b296/" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
-                <Linkedin className="w-4 h-4" />
-              </a>
-              <a id="footer-github" href="https://github.com/Bilaal-Ahmed/Halal-Bazaar" target="_blank" rel="noopener noreferrer" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
+              <a id="footer-github" href="https://github.com/Ahmiii281/Halal-Bazaar" target="_blank" rel="noopener noreferrer" aria-label="Halal-Bazaar GitHub repository" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
                 <Github className="w-4 h-4" />
               </a>
-              <a id="footer-mail" href="mailto:mr.bilal.ahmed281@gmail.com" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
+              {supportEmail && <a id="footer-mail" href={`mailto:${supportEmail}`} aria-label="Email support" className="w-9 h-9 bg-gray-800 rounded-xl flex items-center justify-center text-gray-400 hover:bg-primary hover:text-white transition-all">
                 <Mail className="w-4 h-4" />
-              </a>
+              </a>}
             </div>
           </div>
 
@@ -65,12 +60,14 @@ export function Footer() {
             <ul className="space-y-3 text-sm text-gray-400">
               {[
                 { label: 'Shop All Products', to: '/products' },
-                { label: 'Become a Seller', to: '/seller' },
-                { label: 'About Us', to: '#' },
-                { label: 'Blog', to: '#' },
-                { label: 'Contact Us', to: '#' },
-                { label: 'Privacy Policy', to: '#' },
-                { label: 'Terms of Service', to: '#' },
+                { label: 'Buyer Dashboard', to: '/dashboard' },
+                { label: 'Become a Seller', to: '/profile' },
+                { label: 'About Us', to: '/about' },
+                { label: 'Blog', to: '/blog' },
+                { label: 'FAQs', to: '/faq' },
+                { label: 'Contact Us', to: '/contact' },
+                { label: 'Privacy Policy', to: '/privacy' },
+                { label: 'Terms of Service', to: '/terms' },
               ].map(link => (
                 <li key={link.label}>
                   <Link to={link.to} className="hover:text-primary transition-colors">
@@ -84,27 +81,12 @@ export function Footer() {
           {/* Contact */}
           <div>
             <h4 className="text-white font-bold mb-5 text-sm uppercase tracking-wider">Contact</h4>
-            <ul className="space-y-4 text-sm text-gray-400">
-              <li className="flex items-start gap-3">
-                <MapPin className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                <span>DHA Phase 6, Lahore, Pakistan 54000</span>
-              </li>
-              <li className="flex items-center gap-3">
-                <Phone className="w-4 h-4 text-primary shrink-0" />
-                <span>+92-300-1234567</span>
-              </li>
-              <li className="flex items-center gap-3">
-                <Mail className="w-4 h-4 text-primary shrink-0" />
-                <span>support@halalbazaar.com</span>
-              </li>
-            </ul>
-
-            {/* Hours */}
-            <div className="mt-6 p-4 bg-gray-900 rounded-xl border border-gray-800">
-              <p className="text-xs font-bold text-white mb-2">Support Hours</p>
-              <p className="text-xs text-gray-400">Mon – Sat: 9:00 AM – 9:00 PM</p>
-              <p className="text-xs text-gray-400">Sunday: 10:00 AM – 6:00 PM</p>
-            </div>
+            <p className="text-sm text-gray-400">
+              {supportEmail
+                ? <>Email us at <a className="text-primary hover:underline" href={`mailto:${supportEmail}`}>{supportEmail}</a>.</>
+                : 'Support contact details have not been configured yet.'}
+            </p>
+            <Link to="/contact" className="mt-4 inline-flex text-sm font-semibold text-primary hover:underline">Contact options</Link>
           </div>
         </div>
       </div>

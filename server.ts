@@ -1,13 +1,15 @@
-import express, { NextFunction, Request, Response } from "express";
-import { createServer as createViteServer } from "vite";
+import express from "express";
+import type { NextFunction, Request, Response } from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import { createHash } from "crypto";
 import dotenv from "dotenv";
 import { applicationDefault, cert, getApps, initializeApp } from "firebase-admin/app";
-import { DecodedIdToken } from "firebase-admin/auth";
-import { DocumentData, FieldValue, getFirestore, Transaction } from "firebase-admin/firestore";
+import type { DecodedIdToken } from "firebase-admin/auth";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
+import type { DocumentData, Transaction } from "firebase-admin/firestore";
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -16,8 +18,7 @@ const __dirname = path.dirname(__filename);
 const PORT = Number(process.env.PORT || 3000);
 const LEGACY_ADMIN_EMAIL = "ba341914@gmail.com";
 const ADMIN_EMAILS = new Set(
-  (process.env.ADMIN_EMAILS || LEGACY_ADMIN_EMAIL)
-    .split(",")
+  [LEGACY_ADMIN_EMAIL, ...(process.env.ADMIN_EMAILS || "").split(",")]
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean),
 );
@@ -29,6 +30,8 @@ if (!Number.isFinite(configuredTaxRate) || configuredTaxRate < 0 || configuredTa
 }
 const TAX_RATE = configuredTaxRate;
 const requestCounts = new Map<string, { count: number; expiresAt: number }>();
+const MAX_RATE_LIMIT_KEYS = 20_000;
+let rateLimitRequestCount = 0;
 
 interface AuthenticatedRequest extends Request {
   identity?: DecodedIdToken;
@@ -41,13 +44,13 @@ interface OrderLineInput {
 }
 
 function databaseName() {
-  if (process.env.FIRESTORE_DATABASE_ID) return process.env.FIRESTORE_DATABASE_ID;
-  try {
-    const config = JSON.parse(readFileSync(path.join(__dirname, "firebase-applet-config.json"), "utf8"));
-    return config.firestoreDatabaseId || "(default)";
-  } catch {
-    return "(default)";
+  if (process.env.FIRESTORE_DATABASE_ID?.trim()) return process.env.FIRESTORE_DATABASE_ID.trim();
+  const configPath = path.join(__dirname, "firebase-applet-config.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8")) as { firestoreDatabaseId?: unknown };
+  if (typeof config.firestoreDatabaseId !== "string" || !config.firestoreDatabaseId.trim()) {
+    throw new Error("FIRESTORE_DATABASE_ID is unset and firebase-applet-config.json has no named database ID.");
   }
+  return config.firestoreDatabaseId.trim();
 }
 
 function getAdminDb() {
@@ -82,12 +85,21 @@ function validText(value: unknown, maxLength: number, required = true): value is
     && (!required || value.trim().length > 0);
 }
 
-function limitRequests(windowMs: number, maxRequests: number) {
+function limitRequests(windowMs: number, maxRequests: number, scope: "path" | "ip" = "path") {
   return (req: Request, _res: Response, next: NextFunction) => {
     const now = Date.now();
-    const key = `${req.ip}:${req.path}`;
+    const key = scope === "ip" ? req.ip : `${req.ip}:${req.path}`;
     const current = requestCounts.get(key);
+    if ((rateLimitRequestCount++ % 256) === 0) {
+      for (const [entryKey, entry] of requestCounts) {
+        if (entry.expiresAt <= now) requestCounts.delete(entryKey);
+      }
+    }
     if (!current || current.expiresAt <= now) {
+      if (!current && requestCounts.size >= MAX_RATE_LIMIT_KEYS) {
+        next(apiError(503, "rate_limiter_capacity", "Request protection is temporarily at capacity. Try again shortly."));
+        return;
+      }
       requestCounts.set(key, { count: 1, expiresAt: now + windowMs });
       next();
       return;
@@ -118,8 +130,8 @@ const authenticate = asyncRoute(async (req, _res, next) => {
     });
     const { getAuth } = await import("firebase-admin/auth");
     identity = await getAuth(app).verifyIdToken(token, true);
-  } catch (error) {
-    console.error("Firebase ID token verification failed:", error);
+  } catch {
+    console.error("Firebase ID token verification failed.");
     throw apiError(401, "invalid_token", "The Firebase ID token is invalid or expired.");
   }
 
@@ -190,9 +202,50 @@ function writeAudit(
 async function startServer() {
   const app = express();
   app.disable("x-powered-by");
+  app.set("trust proxy", process.env.TRUST_PROXY === "true" ? 1 : false);
   app.use(express.json({ limit: "256kb" }));
+  app.use("/api", limitRequests(60_000, 300, "ip"));
 
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+  app.post("/api/chat", limitRequests(60_000, 12), asyncRoute(async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    if (!apiKey) throw apiError(503, "chat_not_configured", "The assistant is temporarily unavailable.");
+    const message = req.body?.message;
+    const history = req.body?.history;
+    if (!validText(message, 2000) || !Array.isArray(history) || history.length > 20) {
+      throw apiError(400, "invalid_chat_request", "Provide a message up to 2,000 characters and no more than 20 prior messages.");
+    }
+    const safeHistory = history.map((entry: unknown) => {
+      if (!entry || typeof entry !== "object") throw apiError(400, "invalid_chat_history", "Chat history contains an invalid message.");
+      const item = entry as { role?: unknown; parts?: unknown };
+      const text = Array.isArray(item.parts) && item.parts.length === 1
+        ? (item.parts[0] as { text?: unknown } | null)?.text
+        : null;
+      if ((item.role !== "user" && item.role !== "model") || !validText(text, 2000)) {
+        throw apiError(400, "invalid_chat_history", "Chat history contains an invalid message.");
+      }
+      return { role: item.role, parts: [{ text }] };
+    });
+    try {
+      const client = new GoogleGenAI({ apiKey });
+      const chat = client.chats.create({
+        model: "gemini-3-flash-preview",
+        config: {
+          systemInstruction: "You are a helpful shopping assistant for Halal-Bazaar, a multi-vendor marketplace. Do not claim that products, sellers, or certificates have been independently verified. Do not request personal, payment, or account credentials.",
+        },
+        history: safeHistory,
+      });
+      const response = await chat.sendMessage({ message: message.trim() });
+      if (typeof response.text !== "string" || !response.text.trim()) {
+        throw apiError(502, "chat_empty_response", "The assistant returned no response.");
+      }
+      res.json({ text: response.text });
+    } catch (error) {
+      if ((error as { status?: number }).status) throw error;
+      console.error("Gemini assistant request failed.");
+      throw apiError(502, "chat_provider_error", "The assistant could not complete this request.");
+    }
+  }));
   app.get("/api/checkout/config", (_req, res) => {
     res.json({
       currency: CURRENCY,
@@ -555,6 +608,9 @@ async function startServer() {
     }
     const db = getAdminDb();
     const uid = req.params.uid;
+    if (uid === req.identity!.uid) {
+      throw apiError(403, "self_application_review", "Administrators cannot review their own seller application.");
+    }
     const applicationRef = db.doc(`sellerApplications/${uid}`);
     const userRef = db.doc(`users/${uid}`);
     const audit = auditRef(db);
@@ -637,6 +693,9 @@ async function startServer() {
       const orderSnapshot = await transaction.get(orderRef);
       if (!orderSnapshot.exists) throw apiError(404, "order_not_found", "Order not found.");
       const order = orderSnapshot.data()!;
+      if (order.buyerId === req.identity!.uid) {
+        throw apiError(403, "self_payment_review", "Administrators cannot review payment for their own order.");
+      }
       const expectedMethod = decision === "cash_received" ? "cash_on_delivery" : "bank_transfer";
       const expectedPaymentStatus = decision === "cash_received" ? "unpaid" : "pending_review";
       if (order.paymentMethod !== expectedMethod || order.paymentStatus !== expectedPaymentStatus
@@ -685,7 +744,8 @@ async function startServer() {
   }));
 
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
+    const { createServer } = await import("vite");
+    const vite = await createServer({
       server: { middlewareMode: true },
       appType: "spa",
     });

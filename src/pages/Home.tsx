@@ -7,7 +7,7 @@ import { AuthModal } from '../components/AuthModal';
 import { CATEGORIES, Product } from '../types';
 import { ProductCard } from '../components/ProductCard';
 import {
-  ShoppingBag, ArrowRight, ShieldCheck, Truck, HeadphonesIcon, Star,
+  ShoppingBag, ArrowRight, ShieldCheck, Truck, HeadphonesIcon,
   ChevronRight, Sparkles, Users, Award, Globe
 } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -162,7 +162,7 @@ function CategoriesSection() {
           <span className="halal-badge mb-3">Browse Categories</span>
           <h2 className="text-4xl font-black mt-3">Shop by Category</h2>
           <p className="text-muted-foreground mt-3 max-w-lg mx-auto">
-            Explore our wide range of halal-certified product categories
+            Explore independent sellers' listings across a range of categories.
           </p>
         </div>
 
@@ -342,126 +342,6 @@ function WhyUsSection() {
             </motion.div>
           ))}
         </div>
-      </div>
-    </section>
-  );
-}
-
-/* ─── Testimonials ───────────────────────────────────────────────────── */
-function Testimonials() {
-  const reviews = [
-    {
-      name: 'Fatima Al-Rashid',
-      role: 'Regular Customer',
-      review: 'Halal-Bazaar has completely transformed my shopping experience. I can shop confidently knowing every product is verified halal. The quality is exceptional!',
-      rating: 5,
-      avatar: 'https://i.pravatar.cc/80?img=47',
-    },
-    {
-      name: 'Ahmed Khan',
-      role: 'Seller since 2024',
-      review: "As a seller, the platform has given my halal business incredible reach. Sales have doubled in 3 months. The team's support is outstanding!",
-      rating: 5,
-      avatar: 'https://i.pravatar.cc/80?img=33',
-    },
-    {
-      name: 'Sarah Mohammed',
-      role: 'Verified Buyer',
-      review: "Best online shopping experience I've had. Products arrive beautifully packaged, and the halal certification gives me complete peace of mind.",
-      rating: 5,
-      avatar: 'https://i.pravatar.cc/80?img=45',
-    },
-  ];
-
-  return (
-    <section className="py-20 bg-slate-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center mb-14">
-          <span className="halal-badge mb-3">Testimonials</span>
-          <h2 className="text-4xl font-black mt-3">Loved by Our Community</h2>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {reviews.map((r, i) => (
-            <motion.div
-              key={r.name}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: i * 0.1 }}
-              className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-xl card-hover"
-            >
-              <div className="flex gap-1 mb-4">
-                {[...Array(r.rating)].map((_, j) => (
-                  <Star key={j} className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                ))}
-              </div>
-              <p className="text-gray-700 text-sm leading-relaxed mb-6">"{r.review}"</p>
-              <div className="flex items-center gap-3">
-                <img src={r.avatar} alt={r.name} className="w-11 h-11 rounded-full object-cover" referrerPolicy="no-referrer" />
-                <div>
-                  <p className="font-bold text-sm">{r.name}</p>
-                  <p className="text-xs text-muted-foreground">{r.role}</p>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ─── Newsletter ─────────────────────────────────────────────────────── */
-function Newsletter() {
-  const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setSent(true);
-    setEmail('');
-  };
-
-  return (
-    <section className="py-20 hero-gradient">
-      <div className="max-w-2xl mx-auto px-4 text-center text-white">
-        <span className="inline-flex items-center gap-1 bg-white/10 border border-white/20 rounded-full px-3 py-1 text-xs mb-4">
-          <Sparkles className="w-3 h-3 text-yellow-400" /> Exclusive Deals
-        </span>
-        <h2 className="text-4xl font-black mb-4">Get 15% Off Your First Order</h2>
-        <p className="text-white/75 mb-8">
-          Subscribe to our newsletter and be the first to know about new arrivals, halal sales, and exclusive community offers.
-        </p>
-        {sent ? (
-          <div className="bg-white/10 border border-white/20 rounded-2xl p-6 backdrop-blur-sm">
-            <div className="text-3xl mb-2">🎉</div>
-            <p className="font-bold text-lg">You're in! Welcome to the community.</p>
-            <p className="text-white/70 text-sm mt-1">Check your Gmail for your 15% discount code.</p>
-          </div>
-        ) : (
-          <form
-            id="newsletter-form"
-            onSubmit={handleSubmit}
-            className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"
-          >
-            <input
-              type="email"
-              placeholder="your@gmail.com"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              required
-              className="flex-1 h-12 px-5 rounded-xl bg-white/10 border border-white/30 text-white placeholder:text-white/50 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-white/50"
-            />
-            <Button
-              id="newsletter-subscribe-btn"
-              type="submit"
-              className="bg-white text-primary hover:bg-white/90 font-bold px-6 h-12"
-            >
-              Subscribe
-            </Button>
-          </form>
-        )}
       </div>
     </section>
   );
