@@ -29,6 +29,9 @@ if (!Number.isFinite(configuredTaxRate) || configuredTaxRate < 0 || configuredTa
   throw new Error("ORDER_TAX_RATE must be a number between 0 and 1.");
 }
 const TAX_RATE = configuredTaxRate;
+const corsOrigins = new Set(
+  (process.env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
+);
 const requestCounts = new Map<string, { count: number; expiresAt: number }>();
 const MAX_RATE_LIMIT_KEYS = 20_000;
 let rateLimitRequestCount = 0;
@@ -88,7 +91,7 @@ function validText(value: unknown, maxLength: number, required = true): value is
 function limitRequests(windowMs: number, maxRequests: number, scope: "path" | "ip" = "path") {
   return (req: Request, _res: Response, next: NextFunction) => {
     const now = Date.now();
-    const key = scope === "ip" ? req.ip : `${req.ip}:${req.path}`;
+    const key = scope === "ip" ? (req.ip || "unknown") : `${req.ip || "unknown"}:${req.path}`;
     const current = requestCounts.get(key);
     if ((rateLimitRequestCount++ % 256) === 0) {
       for (const [entryKey, entry] of requestCounts) {
@@ -112,6 +115,31 @@ function limitRequests(windowMs: number, maxRequests: number, scope: "path" | "i
     next();
   };
 }
+
+
+function allowConfiguredOrigins(req: Request, res: Response, next: NextFunction) {
+  const origin = req.header("origin");
+
+  if (origin && corsOrigins.size > 0) {
+    if (!corsOrigins.has(origin)) {
+      next(apiError(403, "origin_not_allowed", "This application origin is not allowed."));
+      return;
+    }
+
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.vary("Origin");
+  }
+
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    res.status(204).end();
+    return;
+  }
+
+  next();
+}
+
 
 const authenticate = asyncRoute(async (req, _res, next) => {
   const authorization = req.header("authorization") || "";
@@ -204,6 +232,7 @@ async function startServer() {
   app.disable("x-powered-by");
   app.set("trust proxy", process.env.TRUST_PROXY === "true" ? 1 : false);
   app.use(express.json({ limit: "256kb" }));
+  app.use("/api", allowConfiguredOrigins);
   app.use("/api", limitRequests(60_000, 300, "ip"));
 
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
@@ -273,6 +302,7 @@ async function startServer() {
       || !validText(input.shippingAddress.country, 80)) {
       throw apiError(400, "invalid_address", "Complete all required delivery address fields.");
     }
+    const shippingAddress = input.shippingAddress;
     const paymentMethod = input.paymentMethod;
     if (paymentMethod !== "cash_on_delivery" && paymentMethod !== "bank_transfer") {
       throw apiError(400, "invalid_payment_method", "Select cash on delivery or manual bank transfer.");
@@ -311,7 +341,7 @@ async function startServer() {
       paymentMethod,
       transferReference: paymentMethod === "bank_transfer" ? (input.transferReference || "").trim() : "",
       shippingAddress: Object.fromEntries(
-        Object.entries(input.shippingAddress).map(([key, value]) => [key, typeof value === "string" ? value.trim() : value]),
+        Object.entries(shippingAddress).map(([key, value]) => [key, typeof value === "string" ? value.trim() : value]),
       ),
     })).digest("hex");
     const result = await db.runTransaction(async (transaction) => {
@@ -402,11 +432,11 @@ async function startServer() {
         paymentStatus: paymentMethod === "bank_transfer" ? "pending_review" : "unpaid",
         transferReference: paymentMethod === "bank_transfer" ? (input.transferReference || "").trim() : "",
         shippingAddress: {
-          name: (input.shippingAddress.name as string).trim(),
-          address: (input.shippingAddress.address as string).trim(),
-          city: (input.shippingAddress.city as string).trim(),
-          zip: (input.shippingAddress.zip as string).trim(),
-          country: (input.shippingAddress.country as string).trim(),
+          name: (shippingAddress.name as string).trim(),
+          address: (shippingAddress.address as string).trim(),
+          city: (shippingAddress.city as string).trim(),
+          zip: (shippingAddress.zip as string).trim(),
+          country: (shippingAddress.country as string).trim(),
         },
         fulfillmentBySeller: {},
         createdAt: FieldValue.serverTimestamp(),
@@ -723,7 +753,7 @@ async function startServer() {
     res.json({ ok: true, decision });
   }));
 
-  app.post("/api/payments/:provider/initiate", authenticate, requireActiveAccount, asyncRoute(async (req, res) => {
+  app.post("/api/payments/:provider/initiate", authenticate, requireActiveAccount, asyncRoute(async (req, _res) => {
     const provider = req.params.provider;
     if (!["jazzcash", "easypaisa"].includes(provider)) throw apiError(404, "unknown_provider", "Unsupported payment provider.");
     if (typeof req.body?.orderId !== "string") throw apiError(400, "order_required", "An order ID is required.");

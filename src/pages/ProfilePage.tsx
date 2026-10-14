@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { User, BadgeCheck, MapPin, ShieldCheck, Mail, Phone, Save, KeyRound, CheckCircle2, Store } from 'lucide-react';
 import { db } from '../firebase';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { apiRequest } from '../lib/api';
+import { ApiError, apiRequest } from '../lib/api';
 import { DeliveryAddress } from '../types';
 
 export default function ProfilePage() {
@@ -129,7 +129,20 @@ export default function ProfilePage() {
       });
       toast.success('Seller application submitted for review.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not submit seller application.');
+      if (error instanceof ApiError) {
+        const messages: Record<number, string> = {
+          400: 'Check the application details and try again.',
+          401: 'Please sign in again before submitting your application.',
+          403: 'An active account with a verified email is required to apply.',
+          409: error.code === 'application_pending'
+            ? 'Your seller application is already awaiting review.'
+            : 'This account already has approved seller access.',
+          429: 'Too many applications were submitted. Please try again later.',
+        };
+        toast.error(messages[error.status] || 'Seller applications are temporarily unavailable. Please try again later.');
+      } else {
+        toast.error('Could not submit the seller application. Please try again later.');
+      }
     } finally {
       setApplicationSaving(false);
     }
