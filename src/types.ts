@@ -42,7 +42,9 @@ export interface Product {
   id: string;
   name: string;
   description: string;
-  price: number;
+  price?: number;
+  pricePKR?: number;
+  priceUSD?: number;
   originalPrice?: number;
   category: string;
   stock: number;
@@ -62,23 +64,46 @@ export interface CartItem {
   quantity: number;
 }
 
+export interface OrderSellerPayment {
+  sellerId: string;
+  subtotal: number;
+  taxAmount: number;
+  amount: number;
+  paymentAccountId: string;
+  paymentAccount: {
+    method: 'jazzcash' | 'easypaisa' | 'raast' | 'bank_transfer';
+    accountTitle: string;
+    accountNumber: string;
+    iban: string;
+    instructions: string;
+  };
+  transferReference: string;
+  status: 'pending_review' | 'paid' | 'rejected';
+  reviewedAt?: any;
+  reviewedBy?: string | null;
+}
+
 export interface Order {
   id: string;
   buyerId: string;
   items: Array<{
-    product: Pick<Product, 'id' | 'name' | 'price' | 'category' | 'images' | 'sellerId' | 'sellerName'>;
+    product: Pick<Product, 'id' | 'name' | 'price' | 'category' | 'images' | 'sellerId' | 'sellerName'> & {
+      priceCurrency?: 'PKR' | 'USD';
+    };
     quantity: number;
     lineTotal: number;
   }>;
   sellerIds: string[];
-  currency: string;
+  currency: 'PKR' | 'USD' | string;
   totalAmount: number;
   subtotal: number;
   taxAmount: number;
+  taxRate?: number;
   status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
-  paymentMethod: 'cash_on_delivery' | 'bank_transfer' | 'jazzcash' | 'easypaisa';
+  paymentMethod: 'cash_on_delivery' | 'bank_transfer' | 'manual_payment' | 'jazzcash' | 'easypaisa';
   paymentStatus: 'unpaid' | 'pending_review' | 'paid' | 'rejected';
   transferReference?: string;
+  sellerPayments?: Record<string, OrderSellerPayment>;
   fulfillmentBySeller?: Record<string, { status: string; updatedAt?: any }>;
   shippingAddress?: {
     name: string;

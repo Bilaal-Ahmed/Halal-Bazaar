@@ -18,17 +18,20 @@ import {
 
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
+import { useFavourites } from '../contexts/FavouritesContext';
 import { AuthModal } from './AuthModal';
 
 interface NavItem {
   href: string;
   label: string;
   icon: React.ReactNode;
+  badgeCount?: number;
 }
 
 export function Navbar() {
   const { user, profile, logout } = useAuth();
   const { items } = useCart();
+  const { favouriteIds } = useFavourites();
   const navigate = useNavigate();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -38,6 +41,7 @@ export function Navbar() {
     (total, item) => total + (item.quantity || 1),
     0
   );
+  const favouriteCount = favouriteIds.length;
 
   const isAdmin = profile?.role === 'admin';
 
@@ -66,6 +70,7 @@ export function Navbar() {
           href: '/favourites',
           label: 'Favourites',
           icon: <Heart className="h-4 w-4" />,
+          badgeCount: favouriteCount,
         },
         {
           href: '/orders',
@@ -133,6 +138,11 @@ export function Navbar() {
               >
                 {item.icon}
                 <span>{item.label}</span>
+                {item.badgeCount != null && item.badgeCount > 0 && (
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-700 px-1 text-xs font-bold text-white">
+                    {item.badgeCount}
+                  </span>
+                )}
               </NavLink>
             ))}
           </nav>
@@ -224,6 +234,11 @@ export function Navbar() {
                 >
                   {item.icon}
                   <span>{item.label}</span>
+                  {item.badgeCount != null && item.badgeCount > 0 && (
+                    <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-700 px-1 text-xs font-bold text-white">
+                      {item.badgeCount}
+                    </span>
+                  )}
                 </NavLink>
               ))}
             </nav>

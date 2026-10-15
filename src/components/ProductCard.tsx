@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { Heart, ShoppingCart, Tag } from 'lucide-react';
 import { useCart } from '../contexts/CartContext';
 import { useFavourites } from '../contexts/FavouritesContext';
-import { formatCurrency } from '../lib/currency';
+import { useCheckoutConfig } from '../contexts/CheckoutConfigContext';
+import { formatCurrency, getProductPrice } from '../lib/currency';
 import type { Product } from '../types';
 
 interface ProductCardProps {
@@ -17,6 +18,9 @@ export function ProductCard({
 }: ProductCardProps) {
   const { addToCart } = useCart();
   const { isFavourite, toggleFavourite } = useFavourites();
+  const { config } = useCheckoutConfig();
+  const pricePKR = getProductPrice(product, 'PKR', config?.legacyPriceCurrency);
+  const priceUSD = getProductPrice(product, 'USD', config?.legacyPriceCurrency);
 
   const favourite = isFavourite(product.id);
   const productName = product.name || 'Unnamed product';
@@ -94,9 +98,21 @@ export function ProductCard({
 
         <div className="mt-auto pt-4">
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="text-lg font-bold text-emerald-700">
-              {formatCurrency(product.price)}
-            </span>
+            {pricePKR != null && (
+              <span className="text-lg font-bold text-emerald-700">
+                {formatCurrency(pricePKR, 'PKR')}
+              </span>
+            )}
+            {priceUSD != null && (
+              <span className="text-lg font-bold text-emerald-700">
+                {formatCurrency(priceUSD, 'USD')}
+              </span>
+            )}
+            {pricePKR == null && priceUSD == null && (
+              <span className="text-sm text-amber-700">
+                Price currency needs confirmation
+              </span>
+            )}
           </div>
 
           <button

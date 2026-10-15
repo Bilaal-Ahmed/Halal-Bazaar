@@ -10,6 +10,23 @@ import type { DecodedIdToken } from "firebase-admin/auth";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import type { DocumentData, Transaction } from "firebase-admin/firestore";
 import { GoogleGenAI } from "@google/genai";
+import {
+  calculateTaxCents,
+  getProductPrice,
+  isCashOnDeliveryAllowed,
+  marketCurrencyForCountry,
+} from "./src/lib/currency.ts";
+import {
+  allocateSellerTaxCents,
+  applySellerPaymentReview,
+  assertSellerPaymentEntriesMatchSellers,
+  createPendingSellerPayment,
+  findEnabledPaymentAccount,
+  isApprovedSellerProfile,
+  PaymentValidationError,
+  validateSellerPaymentAccounts,
+  validateSellerPaymentEntries,
+} from "./src/lib/sellerPayments.ts";
 
 dotenv.config();
 
@@ -22,13 +39,40 @@ const ADMIN_EMAILS = new Set(
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean),
 );
-const CURRENCY = (process.env.ORDER_CURRENCY || "USD").toUpperCase();
-const configuredTaxRate = Number(process.env.ORDER_TAX_RATE ?? "0.05");
-if (!/^[A-Z]{3}$/.test(CURRENCY)) throw new Error("ORDER_CURRENCY must be a 3-letter ISO currency code.");
-if (!Number.isFinite(configuredTaxRate) || configuredTaxRate < 0 || configuredTaxRate > 1) {
-  throw new Error("ORDER_TAX_RATE must be a number between 0 and 1.");
+function configuredTaxRate(value: string, variable: string) {
+  const rate = Number(value);
+  if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
+    throw new Error(`${variable} must be a number between 0 and 1.`);
+  }
+  return rate;
 }
-const TAX_RATE = configuredTaxRate;
+const PKR_TAX_RATE = configuredTaxRate(
+  process.env.PKR_ORDER_TAX_RATE?.trim() || process.env.ORDER_TAX_RATE?.trim() || "0.05",
+  process.env.PKR_ORDER_TAX_RATE?.trim() ? "PKR_ORDER_TAX_RATE" : "ORDER_TAX_RATE",
+);
+const USD_TAX_RATE = process.env.USD_ORDER_TAX_RATE?.trim()
+  ? configuredTaxRate(process.env.USD_ORDER_TAX_RATE, "USD_ORDER_TAX_RATE")
+  : null;
+const legacyPriceCurrencyValue = process.env.LEGACY_PRODUCT_PRICE_CURRENCY?.trim().toUpperCase();
+if (legacyPriceCurrencyValue && !["PKR", "USD"].includes(legacyPriceCurrencyValue)) {
+  throw new Error("LEGACY_PRODUCT_PRICE_CURRENCY must be PKR or USD.");
+}
+const LEGACY_PRODUCT_PRICE_CURRENCY: "PKR" | "USD" | undefined =
+  legacyPriceCurrencyValue === "PKR" || legacyPriceCurrencyValue === "USD"
+    ? legacyPriceCurrencyValue
+    : undefined;
+const COD_ALLOWED_COUNTRIES = new Set(
+  (process.env.COD_ALLOWED_COUNTRIES || "PK")
+    .split(",")
+    .map((country) => country.trim().toUpperCase())
+    .filter(Boolean),
+);
+if ([...COD_ALLOWED_COUNTRIES].some((country) => !/^[A-Z]{2}$/.test(country))) {
+  throw new Error("COD_ALLOWED_COUNTRIES must contain comma-separated ISO 3166-1 alpha-2 codes.");
+}
+const DOMESTIC_BANK_TRANSFER_INSTRUCTIONS = process.env.DOMESTIC_BANK_TRANSFER_INSTRUCTIONS?.trim() || "";
+const INTERNATIONAL_BANK_TRANSFER_INSTRUCTIONS = process.env.INTERNATIONAL_BANK_TRANSFER_INSTRUCTIONS?.trim() || "";
+const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
 const corsOrigins = new Set(
   (process.env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
 );
@@ -44,6 +88,23 @@ interface AuthenticatedRequest extends Request {
 interface OrderLineInput {
   productId: string;
   quantity: number;
+}
+
+function normalizeShippingCountry(value: unknown) {
+  if (typeof value !== "string") {
+    throw apiError(400, "invalid_country", "Enter a valid two-letter ISO country code.");
+  }
+  const trimmed = value.trim();
+  const code = /^pakistan$/i.test(trimmed)
+    ? "PK"
+    : /^[A-Za-z]{2}$/.test(trimmed)
+      ? trimmed.toUpperCase()
+      : "";
+  const name = code ? regionNames.of(code) : undefined;
+  if (!code || !name || name === "Unknown Region" || name === code) {
+    throw apiError(400, "invalid_country", "Enter a valid two-letter ISO country code, such as PK or US.");
+  }
+  return { code, name };
 }
 
 function databaseName() {
@@ -180,7 +241,7 @@ const requireActiveAccount = asyncRoute(async (req, _res, next) => {
 });
 
 const requireSeller = asyncRoute(async (req, _res, next) => {
-  if (req.account?.role !== "seller" || req.account?.status !== "approved") {
+  if (!isApprovedSellerProfile(req.account)) {
     throw apiError(403, "seller_not_approved", "An approved seller account is required.");
   }
   next();
@@ -277,9 +338,13 @@ async function startServer() {
   }));
   app.get("/api/checkout/config", (_req, res) => {
     res.json({
-      currency: CURRENCY,
-      taxRate: TAX_RATE,
-      bankTransferEnabled: Boolean(process.env.BANK_TRANSFER_INSTRUCTIONS?.trim()),
+      taxRates: { PKR: PKR_TAX_RATE, USD: USD_TAX_RATE },
+      legacyPriceCurrency: LEGACY_PRODUCT_PRICE_CURRENCY || null,
+      cashOnDeliveryCountries: [...COD_ALLOWED_COUNTRIES],
+      bankTransferEnabled: {
+        PKR: Boolean(DOMESTIC_BANK_TRANSFER_INSTRUCTIONS),
+        USD: Boolean(INTERNATIONAL_BANK_TRANSFER_INSTRUCTIONS),
+      },
     });
   });
 
@@ -289,6 +354,11 @@ async function startServer() {
       shippingAddress?: Record<string, unknown>;
       paymentMethod?: string;
       transferReference?: string;
+      sellerPayments?: Array<{
+        sellerId?: unknown;
+        paymentAccountId?: unknown;
+        transferReference?: unknown;
+      }>;
       idempotencyKey?: string;
     };
     if (!input || !Array.isArray(input.items) || input.items.length < 1 || input.items.length > 50) {
@@ -303,15 +373,50 @@ async function startServer() {
       throw apiError(400, "invalid_address", "Complete all required delivery address fields.");
     }
     const shippingAddress = input.shippingAddress;
-    const paymentMethod = input.paymentMethod;
-    if (paymentMethod !== "cash_on_delivery" && paymentMethod !== "bank_transfer") {
-      throw apiError(400, "invalid_payment_method", "Select cash on delivery or manual bank transfer.");
+    const destination = normalizeShippingCountry(shippingAddress.country);
+    const validatedShippingAddress = {
+      name: (shippingAddress.name as string).trim(),
+      address: (shippingAddress.address as string).trim(),
+      city: (shippingAddress.city as string).trim(),
+      zip: (shippingAddress.zip as string).trim(),
+      country: destination.name,
+    };
+    const currency = marketCurrencyForCountry(destination.code);
+    const taxRate = currency === "PKR" ? PKR_TAX_RATE : USD_TAX_RATE;
+    if (taxRate === null) {
+      throw apiError(503, "market_tax_not_configured", "International checkout is unavailable until the business configures its USD tax policy.");
     }
-    if (paymentMethod === "bank_transfer" && !process.env.BANK_TRANSFER_INSTRUCTIONS?.trim()) {
-      throw apiError(503, "bank_transfer_not_configured", "Manual bank transfer is unavailable because payment instructions are not configured.");
+    const paymentMethod = input.paymentMethod;
+    if (!["cash_on_delivery", "bank_transfer", "manual_payment"].includes(paymentMethod || "")) {
+      throw apiError(400, "invalid_payment_method", "Select cash on delivery or manual payment.");
+    }
+    if (paymentMethod === "cash_on_delivery"
+      && !isCashOnDeliveryAllowed(destination.code, COD_ALLOWED_COUNTRIES)) {
+      throw apiError(400, "cod_unavailable", "Cash on delivery is not available for this delivery destination.");
+    }
+    const bankTransferInstructions = currency === "PKR"
+      ? DOMESTIC_BANK_TRANSFER_INSTRUCTIONS
+      : INTERNATIONAL_BANK_TRANSFER_INSTRUCTIONS;
+    if (paymentMethod === "bank_transfer" && !bankTransferInstructions) {
+      throw apiError(503, "bank_transfer_not_configured", "Manual bank transfer is unavailable for this market because its payment instructions are not configured.");
     }
     if (paymentMethod === "bank_transfer" && !validText(input.transferReference, 120)) {
       throw apiError(400, "invalid_transfer_reference", "Enter a transfer reference no longer than 120 characters.");
+    }
+    let normalizedSellerPayments: ReturnType<typeof validateSellerPaymentEntries> = [];
+    if (paymentMethod === "manual_payment") {
+      try {
+        normalizedSellerPayments = validateSellerPaymentEntries(input.sellerPayments);
+      } catch (error) {
+        if (error instanceof PaymentValidationError) {
+          throw apiError(400, error.code, error.message);
+        }
+        throw error;
+      }
+    } else if (Array.isArray(input.sellerPayments) && input.sellerPayments.length > 0) {
+      throw apiError(400, "unexpected_seller_payments", "Seller payment entries are only valid for manual payment.");
+    } else if (input.sellerPayments != null && !Array.isArray(input.sellerPayments)) {
+      throw apiError(400, "invalid_seller_payments", "Seller payment entries must be an array.");
     }
 
     const normalizedItems = new Map<string, number>();
@@ -340,9 +445,10 @@ async function startServer() {
       items: [...normalizedItems.entries()].sort(([left], [right]) => left.localeCompare(right)),
       paymentMethod,
       transferReference: paymentMethod === "bank_transfer" ? (input.transferReference || "").trim() : "",
-      shippingAddress: Object.fromEntries(
-        Object.entries(shippingAddress).map(([key, value]) => [key, typeof value === "string" ? value.trim() : value]),
-      ),
+      sellerPayments: normalizedSellerPayments
+        .map((entry) => ({ ...entry }))
+        .sort((left, right) => left.sellerId.localeCompare(right.sellerId)),
+      shippingAddress: validatedShippingAddress,
     })).digest("hex");
     const result = await db.runTransaction(async (transaction) => {
       const previous = await transaction.get(idempotencyRef);
@@ -361,16 +467,76 @@ async function startServer() {
       const productSnapshots = await Promise.all(productRefs.map((ref) => transaction.get(ref)));
       const sellerIdsForProducts = [...new Set(productSnapshots
         .map((snapshot) => snapshot.data()?.sellerId)
-        .filter((sellerId): sellerId is string => typeof sellerId === "string"))];
+        .filter((sellerId): sellerId is string => typeof sellerId === "string"))].sort();
+      if (sellerIdsForProducts.some((sellerId) => !/^[A-Za-z0-9_-]{1,128}$/.test(sellerId))) {
+        throw apiError(409, "invalid_product_seller", "A product is not linked to a valid seller.");
+      }
       const sellerSnapshots = await Promise.all(sellerIdsForProducts.map((uid) => transaction.get(db.doc(`users/${uid}`))));
+      const sellerAccountSnapshots = paymentMethod === "manual_payment"
+        ? await Promise.all(sellerIdsForProducts.map((uid) =>
+          transaction.get(db.doc(`sellerPaymentAccounts/${uid}`)),
+        ))
+        : [];
       const activeSellerIds = new Set(sellerSnapshots
         .filter((snapshot) => snapshot.exists
-          && snapshot.data()?.role === "seller"
-          && snapshot.data()?.status === "approved")
+          && isApprovedSellerProfile(snapshot.data()))
         .map((snapshot) => snapshot.id));
+      const selectedPaymentAccounts = new Map<string, {
+        paymentAccountId: string;
+        transferReference: string;
+        account: ReturnType<typeof validateSellerPaymentAccounts>[number];
+      }>();
+      if (paymentMethod === "manual_payment") {
+        const actualSellerIds = [...sellerIdsForProducts].sort();
+        try {
+          assertSellerPaymentEntriesMatchSellers(normalizedSellerPayments, actualSellerIds);
+        } catch (error) {
+          if (error instanceof PaymentValidationError) {
+            throw apiError(400, error.code, error.message);
+          }
+          throw error;
+        }
+
+        const paymentEntries = new Map(
+          normalizedSellerPayments.map((entry) => [entry.sellerId, entry]),
+        );
+        for (let index = 0; index < actualSellerIds.length; index += 1) {
+          const sellerId = actualSellerIds[index];
+          const entry = paymentEntries.get(sellerId)!;
+          const accountSnapshot = sellerAccountSnapshots[index];
+          const savedAccounts = accountSnapshot.data()?.accounts;
+          if (
+            !accountSnapshot.exists
+            || accountSnapshot.data()?.sellerId !== sellerId
+            || !Array.isArray(savedAccounts)
+          ) {
+            throw apiError(409, "seller_payment_account_unavailable", "A selected seller has no saved payment accounts.");
+          }
+
+          let validatedAccounts: ReturnType<typeof validateSellerPaymentAccounts>;
+          try {
+            validatedAccounts = validateSellerPaymentAccounts(savedAccounts);
+          } catch (error) {
+            if (error instanceof PaymentValidationError) {
+              throw apiError(409, "seller_payment_account_invalid", "A seller's saved payment account is unavailable.");
+            }
+            throw error;
+          }
+          const account = findEnabledPaymentAccount(validatedAccounts, entry.paymentAccountId);
+          if (!account) {
+            throw apiError(409, "seller_payment_account_unavailable", "A selected payment account is no longer enabled for its seller.");
+          }
+          selectedPaymentAccounts.set(sellerId, {
+            paymentAccountId: entry.paymentAccountId,
+            transferReference: entry.transferReference,
+            account,
+          });
+        }
+      }
       const orderLines: Array<Record<string, unknown>> = [];
       let subtotalCents = 0;
       const sellerIds = new Set<string>();
+      const sellerSubtotalsCents = Object.create(null) as Record<string, number>;
 
       productSnapshots.forEach((snapshot, index) => {
         if (!snapshot.exists) throw apiError(400, "product_unavailable", "A product in this cart is no longer available.");
@@ -379,8 +545,9 @@ async function startServer() {
         if (product.published !== true || !Number.isSafeInteger(product.stock) || product.stock < quantity) {
           throw apiError(409, "stock_unavailable", `${product.name || "A product"} is no longer available in the requested quantity.`);
         }
-        if (typeof product.price !== "number" || !Number.isFinite(product.price) || product.price <= 0) {
-          throw apiError(409, "invalid_product_price", "A product has an invalid price and cannot be ordered.");
+        const marketPrice = getProductPrice(product, currency, LEGACY_PRODUCT_PRICE_CURRENCY);
+        if (marketPrice === null) {
+          throw apiError(409, "market_price_unavailable", `A product has no valid ${currency} price and cannot be ordered.`);
         }
         if (typeof product.sellerId !== "string") {
           throw apiError(409, "invalid_product_seller", "A product is not linked to a valid seller.");
@@ -388,7 +555,7 @@ async function startServer() {
         if (!activeSellerIds.has(product.sellerId)) {
           throw apiError(409, "seller_unavailable", "A product's seller is not currently approved.");
         }
-        const priceCents = Math.round(product.price * 100);
+        const priceCents = Math.round(marketPrice * 100);
         if (!Number.isSafeInteger(priceCents) || priceCents <= 0) {
           throw apiError(409, "invalid_product_price", "A product price is outside the supported range.");
         }
@@ -396,27 +563,61 @@ async function startServer() {
         if (!Number.isSafeInteger(subtotalCents)) {
           throw apiError(400, "order_total_overflow", "The order total exceeds the supported range.");
         }
+        const lineTotalCents = priceCents * quantity;
+        sellerSubtotalsCents[product.sellerId] =
+          (sellerSubtotalsCents[product.sellerId] || 0) + lineTotalCents;
+        if (!Number.isSafeInteger(sellerSubtotalsCents[product.sellerId])) {
+          throw apiError(400, "order_total_overflow", "The seller subtotal exceeds the supported range.");
+        }
         sellerIds.add(product.sellerId);
         orderLines.push({
           product: {
             id: snapshot.id,
             name: product.name,
             price: priceCents / 100,
+            priceCurrency: currency,
             category: product.category || "",
             images: Array.isArray(product.images) ? product.images.slice(0, 8) : [],
             sellerId: product.sellerId,
             sellerName: product.sellerName || "",
           },
           quantity,
-          lineTotal: (priceCents * quantity) / 100,
+          lineTotal: lineTotalCents / 100,
         });
         transaction.update(productRefs[index], { stock: product.stock - quantity });
       });
 
-      const taxCents = Math.round(subtotalCents * TAX_RATE);
+      const taxCents = calculateTaxCents(subtotalCents, taxRate);
       const totalCents = subtotalCents + taxCents;
       if (!Number.isSafeInteger(taxCents) || !Number.isSafeInteger(totalCents)) {
         throw apiError(400, "order_total_overflow", "The order total exceeds the supported range.");
+      }
+      let sellerPaymentRecords: Record<
+        string,
+        ReturnType<typeof createPendingSellerPayment>
+      > | undefined;
+      if (paymentMethod === "manual_payment") {
+        const sellerTaxCents = allocateSellerTaxCents(sellerSubtotalsCents, taxCents);
+        sellerPaymentRecords = Object.fromEntries(
+          [...sellerIds].map((sellerId) => {
+            const selected = selectedPaymentAccounts.get(sellerId)!;
+            return [sellerId, createPendingSellerPayment(
+              {
+                sellerId,
+                paymentAccountId: selected.paymentAccountId,
+                transferReference: selected.transferReference,
+              },
+              selected.account,
+              sellerSubtotalsCents[sellerId],
+              sellerTaxCents[sellerId],
+            )];
+          }),
+        );
+        const sellerAmountsCents = Object.values(sellerPaymentRecords)
+          .reduce((total, payment) => total + Math.round(Number(payment.amount) * 100), 0);
+        if (sellerAmountsCents !== totalCents) {
+          throw apiError(500, "seller_payment_total_mismatch", "Seller payment amounts do not reconcile with the order total.");
+        }
       }
       const order = {
         buyerId,
@@ -425,19 +626,17 @@ async function startServer() {
         sellerIds: [...sellerIds],
         subtotal: subtotalCents / 100,
         taxAmount: taxCents / 100,
+        taxRate,
         totalAmount: totalCents / 100,
-        currency: CURRENCY,
+        currency,
         status: "pending",
         paymentMethod,
-        paymentStatus: paymentMethod === "bank_transfer" ? "pending_review" : "unpaid",
+        paymentStatus: paymentMethod === "bank_transfer" || paymentMethod === "manual_payment"
+          ? "pending_review"
+          : "unpaid",
         transferReference: paymentMethod === "bank_transfer" ? (input.transferReference || "").trim() : "",
-        shippingAddress: {
-          name: (shippingAddress.name as string).trim(),
-          address: (shippingAddress.address as string).trim(),
-          city: (shippingAddress.city as string).trim(),
-          zip: (shippingAddress.zip as string).trim(),
-          country: (shippingAddress.country as string).trim(),
-        },
+        ...(sellerPaymentRecords ? { sellerPayments: sellerPaymentRecords } : {}),
+        shippingAddress: validatedShippingAddress,
         fulfillmentBySeller: {},
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
@@ -454,7 +653,7 @@ async function startServer() {
     res.status(result.reused ? 200 : 201).json({
       order: result,
       bankTransferInstructions: paymentMethod === "bank_transfer"
-        ? process.env.BANK_TRANSFER_INSTRUCTIONS?.trim() || null
+        ? bankTransferInstructions
         : null,
     });
   }));
@@ -546,6 +745,132 @@ async function startServer() {
     res.json({ ok: true });
   }));
 
+  app.get(
+    "/api/seller/payment-accounts",
+    authenticate,
+    requireActiveAccount,
+    requireVerifiedEmail,
+    requireSeller,
+    asyncRoute(async (req, res) => {
+      const snapshot = await getAdminDb()
+        .doc(`sellerPaymentAccounts/${req.identity!.uid}`)
+        .get();
+
+      res.json({
+        accounts: snapshot.exists ? snapshot.data()?.accounts || [] : [],
+      });
+    }),
+  );
+
+  app.put(
+    "/api/seller/payment-accounts",
+    authenticate,
+    requireActiveAccount,
+    requireVerifiedEmail,
+    requireSeller,
+    asyncRoute(async (req, res) => {
+      let accounts: ReturnType<typeof validateSellerPaymentAccounts>;
+      try {
+        accounts = validateSellerPaymentAccounts(req.body?.accounts);
+      } catch (error) {
+        if (error instanceof PaymentValidationError) {
+          throw apiError(400, error.code, error.message);
+        }
+        throw error;
+      }
+
+      await getAdminDb()
+        .doc(`sellerPaymentAccounts/${req.identity!.uid}`)
+        .set({
+          sellerId: req.identity!.uid,
+          accounts,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+      res.json({ ok: true, accounts });
+    }),
+  );
+
+  app.get(
+    "/api/checkout/payment-accounts",
+    authenticate,
+    requireActiveAccount,
+    requireVerifiedEmail,
+    asyncRoute(async (req, res) => {
+      const rawSellerIds = req.query.sellerIds;
+
+      if (typeof rawSellerIds !== "string") {
+        throw apiError(400, "seller_ids_required", "Seller IDs are required.");
+      }
+
+      const sellerIds = [...new Set(rawSellerIds.split(","))];
+
+      if (
+        sellerIds.length < 1 ||
+        sellerIds.length > 20 ||
+        sellerIds.length !== rawSellerIds.split(",").length ||
+        sellerIds.some((id) => !/^[A-Za-z0-9_-]{1,128}$/.test(id))
+      ) {
+        throw apiError(400, "invalid_seller_ids", "Invalid seller IDs.");
+      }
+
+      const db = getAdminDb();
+      const snapshots = await Promise.all(
+        sellerIds.map((uid) =>
+          Promise.all([
+            db.doc(`users/${uid}`).get(),
+            db.doc(`sellerPaymentAccounts/${uid}`).get(),
+          ]),
+        ),
+      );
+
+      const sellers = snapshots.map(([userSnapshot, accountSnapshot], index) => {
+        const user = userSnapshot.data() || {};
+        const accountData = accountSnapshot.data() || {};
+        const accountList = accountData.accounts;
+        if (!userSnapshot.exists || !isApprovedSellerProfile(user)) {
+          return { sellerId: sellerIds[index], sellerName: "", accounts: [] };
+        }
+        if (
+          accountSnapshot.exists
+          && accountData.sellerId !== sellerIds[index]
+        ) {
+          throw apiError(409, "seller_payment_account_invalid", "A seller's saved payment account is unavailable.");
+        }
+        let accounts: ReturnType<typeof validateSellerPaymentAccounts> = [];
+        if (Array.isArray(accountList)) {
+          try {
+            accounts = validateSellerPaymentAccounts(accountList);
+          } catch (error) {
+            if (error instanceof PaymentValidationError) {
+              throw apiError(409, "seller_payment_account_invalid", "A seller's saved payment account is unavailable.");
+            }
+            throw error;
+          }
+        }
+
+        return {
+          sellerId: sellerIds[index],
+          sellerName: user.storeName || "",
+          accounts: accounts
+            .filter((account) => account.enabled)
+            .map(({ id, method, accountTitle, accountNumber, iban, instructions }) => ({
+              id,
+              method,
+              accountTitle,
+              accountNumber,
+              iban,
+              instructions,
+              enabled: true,
+            })),
+        };
+      });
+
+      res.json({ sellers });
+    }),
+  );
+
+
   app.get("/api/seller/orders", authenticate, requireActiveAccount, requireVerifiedEmail, requireSeller, asyncRoute(async (req, res) => {
     const snapshot = await getAdminDb().collection("orders")
       .where("sellerIds", "array-contains", req.identity!.uid)
@@ -562,14 +887,95 @@ async function startServer() {
           id: document.id,
           status: order.status,
           paymentStatus: order.paymentStatus,
+          paymentMethod: order.paymentMethod,
           currency: order.currency,
           items,
-          subtotal,
+          subtotal: order.sellerPayments?.[req.identity!.uid]?.subtotal ?? subtotal,
           shippingAddress: order.shippingAddress,
+          sellerPayment: order.sellerPayments?.[req.identity!.uid] || null,
           fulfillmentStatus: order.fulfillmentBySeller?.[req.identity!.uid]?.status || "pending",
         };
       }),
     });
+  }));
+
+  app.post("/api/seller/orders/:orderId/payment-review", authenticate, requireActiveAccount, requireVerifiedEmail, requireSeller, asyncRoute(async (req, res) => {
+    const decision = req.body?.decision;
+    if (decision !== "approve" && decision !== "reject") {
+      throw apiError(400, "invalid_seller_payment_decision", "Choose approve or reject.");
+    }
+    const db = getAdminDb();
+    const sellerId = req.identity!.uid;
+    const orderRef = db.doc(`orders/${req.params.orderId}`);
+    const reviewRef = db.collection("paymentReviews").doc();
+    const audit = auditRef(db);
+    let resultingStatus = "";
+
+    await db.runTransaction(async (transaction) => {
+      const orderSnapshot = await transaction.get(orderRef);
+      if (!orderSnapshot.exists) {
+        throw apiError(404, "order_not_found", "Order not found.");
+      }
+      const order = orderSnapshot.data()!;
+      if (
+        order.paymentMethod !== "manual_payment"
+        || !Array.isArray(order.sellerIds)
+        || !order.sellerIds.includes(sellerId)
+      ) {
+        throw apiError(404, "seller_order_not_found", "This order has no payment assigned to your store.");
+      }
+      if (order.status === "cancelled") {
+        throw apiError(409, "order_cancelled", "Payments cannot be reviewed for a cancelled order.");
+      }
+
+      const payments = order.sellerPayments;
+      if (!payments || typeof payments !== "object" || Array.isArray(payments)) {
+        throw apiError(404, "seller_payment_not_found", "Your seller payment record is unavailable.");
+      }
+      let review: ReturnType<typeof applySellerPaymentReview>;
+      try {
+        review = applySellerPaymentReview(
+          payments as Record<string, Record<string, unknown>>,
+          sellerId,
+          decision,
+          sellerId,
+          FieldValue.serverTimestamp(),
+        );
+      } catch (error) {
+        if (error instanceof PaymentValidationError) {
+          const status = error.code === "seller_payment_not_found" ? 404 : 409;
+          throw apiError(status, error.code, error.message);
+        }
+        throw error;
+      }
+      resultingStatus = review.paymentStatus;
+
+      transaction.update(orderRef, {
+        sellerPayments: review.sellerPayments,
+        paymentStatus: resultingStatus,
+        ...(resultingStatus === "paid"
+          ? {
+            paymentReviewedAt: FieldValue.serverTimestamp(),
+            paymentReviewedBy: sellerId,
+          }
+          : {}),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      transaction.create(reviewRef, {
+        orderId: orderRef.id,
+        buyerId: order.buyerId,
+        sellerId,
+        decision,
+        actorUid: sellerId,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      writeAudit(transaction, audit, req.identity, "seller_order_payment_reviewed", orderRef.id, {
+        sellerId,
+        decision,
+      });
+    });
+
+    res.json({ ok: true, decision, paymentStatus: resultingStatus });
   }));
 
   app.patch("/api/seller/orders/:orderId/fulfillment", authenticate, requireActiveAccount, requireVerifiedEmail, requireSeller, asyncRoute(async (req, res) => {
@@ -585,7 +991,11 @@ async function startServer() {
       if (!snapshot.exists || !Array.isArray(order?.sellerIds) || !order.sellerIds.includes(req.identity!.uid)) {
         throw apiError(404, "seller_order_not_found", "This order is not assigned to your store.");
       }
-      if (order.paymentMethod === "bank_transfer" && order.paymentStatus !== "paid") {
+      if (order.paymentMethod === "manual_payment") {
+        if (order.sellerPayments?.[req.identity!.uid]?.status !== "paid") {
+          throw apiError(409, "payment_review_required", "Your seller payment must be verified before fulfillment begins.");
+        }
+      } else if (order.paymentMethod === "bank_transfer" && order.paymentStatus !== "paid") {
         throw apiError(409, "payment_review_required", "Bank-transfer orders must be verified before fulfillment begins.");
       }
       const currentStatus = order.fulfillmentBySeller?.[req.identity!.uid]?.status || "pending";
@@ -725,6 +1135,9 @@ async function startServer() {
       const order = orderSnapshot.data()!;
       if (order.buyerId === req.identity!.uid) {
         throw apiError(403, "self_payment_review", "Administrators cannot review payment for their own order.");
+      }
+      if (order.paymentMethod === "manual_payment" || order.sellerPayments) {
+        throw apiError(409, "seller_payment_review_required", "Manual seller payments must be reviewed by their assigned sellers.");
       }
       const expectedMethod = decision === "cash_received" ? "cash_on_delivery" : "bank_transfer";
       const expectedPaymentStatus = decision === "cash_received" ? "unpaid" : "pending_review";

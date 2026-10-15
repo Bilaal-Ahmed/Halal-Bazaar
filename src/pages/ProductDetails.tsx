@@ -8,11 +8,13 @@ import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { ArrowLeft, ShieldCheck, ShoppingCart, Store } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatCurrency } from '../lib/currency';
+import { useCheckoutConfig } from '../contexts/CheckoutConfigContext';
+import { formatCurrency, getProductPrice } from '../lib/currency';
 
 export default function ProductDetails() {
   const { productId = '' } = useParams();
   const { addToCart } = useCart();
+  const { config } = useCheckoutConfig();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
@@ -46,6 +48,9 @@ export default function ProductDetails() {
     </div>;
   }
 
+  const pricePKR = getProductPrice(product, 'PKR', config?.legacyPriceCurrency);
+  const priceUSD = getProductPrice(product, 'USD', config?.legacyPriceCurrency);
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10">
       <Link to="/products" className="inline-flex items-center gap-2 text-sm text-primary mb-6"><ArrowLeft className="w-4 h-4" /> Back to products</Link>
@@ -59,7 +64,13 @@ export default function ProductDetails() {
           <p className="mt-4 text-muted-foreground leading-relaxed whitespace-pre-wrap">{product.description}</p>
           {product.isHalalCertified && <p className="mt-4 inline-flex items-center gap-2 text-sm text-green-700"><ShieldCheck className="w-4 h-4" /> Seller marked this listing as halal certified</p>}
           <div className="mt-6 flex items-center gap-2 text-sm text-muted-foreground"><Store className="w-4 h-4" /> Sold by {product.sellerName || 'Marketplace seller'}</div>
-          <div className="mt-6 text-3xl font-black">{formatCurrency(Number(product.price))}</div>
+          <div className="mt-6 space-y-1 text-xl font-black">
+            {pricePKR != null && <p>{formatCurrency(pricePKR, 'PKR')}</p>}
+            {priceUSD != null && <p>{formatCurrency(priceUSD, 'USD')}</p>}
+            {pricePKR == null && priceUSD == null && (
+              <p className="text-base font-medium text-amber-700">Price currency needs confirmation</p>
+            )}
+          </div>
           <p className={`mt-2 text-sm font-semibold ${product.stock > 0 ? 'text-green-700' : 'text-red-600'}`}>
             {product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}
           </p>

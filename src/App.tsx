@@ -2,6 +2,7 @@
 import { AuthProvider } from './contexts/AuthContext';
 import { CartProvider } from './contexts/CartContext';
 import { FavouritesProvider } from './contexts/FavouritesContext';
+import { CheckoutConfigProvider } from './contexts/CheckoutConfigContext';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Footer } from './components/Footer';
@@ -36,9 +37,10 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <CartProvider>
-          <FavouritesProvider>
-            <Router>
+        <CheckoutConfigProvider>
+          <CartProvider>
+            <FavouritesProvider>
+              <Router>
               <div className="min-h-screen bg-slate-50 font-sans antialiased flex flex-col">
                 <Navbar />
 
@@ -134,9 +136,10 @@ export default function App() {
                 <ChatBot />
                 <Toaster richColors position="top-right" />
               </div>
-            </Router>
-          </FavouritesProvider>
-        </CartProvider>
+              </Router>
+            </FavouritesProvider>
+          </CartProvider>
+        </CheckoutConfigProvider>
       </AuthProvider>
     </ErrorBoundary>
   );

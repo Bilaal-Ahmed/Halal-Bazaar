@@ -10,6 +10,7 @@ import {
   query,
   where,
   deleteDoc,
+  deleteField,
   doc,
   updateDoc,
 } from 'firebase/firestore';
@@ -32,19 +33,35 @@ import {
   ShieldCheck,
   Store,
   BarChart3,
+  CreditCard,
 } from 'lucide-react';
 import { CATEGORIES } from '../types';
 import type { Product } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { apiRequest } from '../lib/api';
 import { useNavigate } from 'react-router-dom';
+import { useCheckoutConfig } from '../contexts/CheckoutConfigContext';
+import { formatCurrency, formatProductPrices, getProductPrice } from '../lib/currency';
+import {
+  SELLER_PAYMENT_METHODS,
+  type SellerPaymentAccount,
+  type SellerPaymentMethod,
+} from '../lib/sellerPayments';
 
 type SellerOrder = Record<string, any> & { id: string };
+
+const sellerPaymentMethodLabels: Record<SellerPaymentMethod, string> = {
+  jazzcash: 'JazzCash',
+  easypaisa: 'Easypaisa',
+  raast: 'Raast',
+  bank_transfer: 'Bank transfer',
+};
 
 type ProductFormData = {
   name: string;
   description: string;
-  price: string;
+  pricePKR: string;
+  priceUSD: string;
   originalPrice: string;
   stock: string;
   category: string;
@@ -55,7 +72,8 @@ type ProductFormData = {
 const emptyProductForm: ProductFormData = {
   name: '',
   description: '',
-  price: '',
+  pricePKR: '',
+  priceUSD: '',
   originalPrice: '',
   stock: '',
   category: 'food',
@@ -63,20 +81,17 @@ const emptyProductForm: ProductFormData = {
   imageURL: '',
 };
 
-const formatPKR = (amount: number): string =>
-  new Intl.NumberFormat('en-PK', {
-    style: 'currency',
-    currency: 'PKR',
-    maximumFractionDigits: 2,
-  }).format(Number.isFinite(amount) ? amount : 0);
-
 export default function SellerDashboard() {
   const { user, profile } = useAuth();
+  const { config } = useCheckoutConfig();
   const navigate = useNavigate();
 
   const [myProducts, setMyProducts] = useState<Product[]>([]);
   const [sellerOrders, setSellerOrders] = useState<SellerOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [paymentAccounts, setPaymentAccounts] = useState<SellerPaymentAccount[]>([]);
+  const [paymentAccountsLoading, setPaymentAccountsLoading] = useState(false);
+  const [paymentAccountsSaving, setPaymentAccountsSaving] = useState(false);
   const [storeSaving, setStoreSaving] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(
@@ -162,11 +177,28 @@ export default function SellerDashboard() {
     }
   };
 
+  const loadPaymentAccounts = async () => {
+    setPaymentAccountsLoading(true);
+    try {
+      const result = await apiRequest<{ accounts: SellerPaymentAccount[] }>(
+        '/api/seller/payment-accounts',
+      );
+      setPaymentAccounts(result.accounts || []);
+    } catch (error) {
+      console.error('Could not load seller payment accounts:', error);
+      toast.error(error instanceof Error ? error.message : 'Could not load payment accounts.');
+    } finally {
+      setPaymentAccountsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (isApprovedSeller) {
       void loadSellerOrders();
+      void loadPaymentAccounts();
     } else {
       setSellerOrders([]);
+      setPaymentAccounts([]);
     }
   }, [isApprovedSeller]);
 
@@ -186,7 +218,8 @@ export default function SellerDashboard() {
 
     const name = formData.name.trim();
     const description = formData.description.trim();
-    const priceText = formData.price.trim();
+    const pricePKRText = formData.pricePKR.trim();
+    const priceUSDText = formData.priceUSD.trim();
     const originalPriceText = formData.originalPrice.trim();
     const stockText = formData.stock.trim();
     const imageURL = formData.imageURL.trim();
@@ -201,15 +234,18 @@ export default function SellerDashboard() {
       return;
     }
 
-    if (!priceText) {
-      toast.error('Enter the selling price in PKR.');
+    if (!pricePKRText && !priceUSDText) {
+      toast.error('Enter a selling price in PKR, USD, or both.');
       return;
     }
 
-    const price = Number(priceText);
-
-    if (!Number.isFinite(price) || price <= 0) {
-      toast.error('Selling price must be a number greater than zero.');
+    const pricePKR = pricePKRText ? Number(pricePKRText) : null;
+    const priceUSD = priceUSDText ? Number(priceUSDText) : null;
+    if (
+      (pricePKR !== null && (!Number.isFinite(pricePKR) || pricePKR <= 0)) ||
+      (priceUSD !== null && (!Number.isFinite(priceUSD) || priceUSD <= 0))
+    ) {
+      toast.error('Each selling price must be a number greater than zero.');
       return;
     }
 
@@ -230,9 +266,13 @@ export default function SellerDashboard() {
     if (originalPriceText !== '') {
       originalPrice = Number(originalPriceText);
 
-      if (!Number.isFinite(originalPrice) || originalPrice <= price) {
+      if (
+        pricePKR === null ||
+        !Number.isFinite(originalPrice) ||
+        originalPrice <= pricePKR
+      ) {
         toast.error(
-          'Original price must be greater than the selling price. Leave it blank if there is no discount.'
+          'Original price is a PKR discount field and must be greater than the PKR selling price.'
         );
         return;
       }
@@ -266,7 +306,8 @@ export default function SellerDashboard() {
       const productData = {
         name,
         description,
-        price,
+        ...(pricePKR !== null ? { pricePKR } : {}),
+        ...(priceUSD !== null ? { priceUSD } : {}),
         originalPrice,
         stock,
         category: formData.category,
@@ -285,7 +326,11 @@ export default function SellerDashboard() {
           return;
         }
 
-        await updateDoc(doc(db, 'products', editingProductId), productData);
+        await updateDoc(doc(db, 'products', editingProductId), {
+          ...productData,
+          ...(pricePKR === null ? { pricePKR: deleteField() } : {}),
+          ...(priceUSD === null ? { priceUSD: deleteField() } : {}),
+        });
         toast.success('Product updated successfully.');
       } else {
         await addDoc(collection(db, 'products'), {
@@ -326,9 +371,11 @@ export default function SellerDashboard() {
     setFormData({
       name: product.name || '',
       description: product.description || '',
-      price: String(product.price ?? ''),
+      pricePKR: getProductPrice(product, 'PKR', config?.legacyPriceCurrency)?.toString() || '',
+      priceUSD: getProductPrice(product, 'USD', config?.legacyPriceCurrency)?.toString() || '',
       originalPrice:
-        product.originalPrice != null
+        product.originalPrice != null &&
+        (product.pricePKR != null || config?.legacyPriceCurrency === 'PKR')
           ? String(product.originalPrice)
           : '',
       stock: product.stock != null ? String(product.stock) : '',
@@ -452,23 +499,76 @@ export default function SellerDashboard() {
     status: string
   ) => {
     try {
-      await apiRequest(
-        `/ api / seller / orders / ${ encodeURIComponent(orderId) }/fulfillment`,
-{
-  method: 'PATCH',
-    body: JSON.stringify({ status }),
-        }
-      );
-
-toast.success('Order fulfillment updated.');
-await loadSellerOrders();
+      await apiRequest(`/api/seller/orders/${encodeURIComponent(orderId)}/fulfillment`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+      toast.success('Order fulfillment updated.');
+      await loadSellerOrders();
     } catch (error) {
-  toast.error(
-    error instanceof Error
-      ? error.message
-      : 'Could not update fulfillment.'
-  );
-}
+      toast.error(error instanceof Error ? error.message : 'Could not update fulfillment.');
+    }
+  };
+
+  const addPaymentAccount = () => {
+    if (paymentAccounts.length >= 10) {
+      toast.error('You can save up to 10 payment accounts.');
+      return;
+    }
+    setPaymentAccounts((accounts) => [...accounts, {
+      id: crypto.randomUUID(),
+      method: 'jazzcash',
+      accountTitle: '',
+      accountNumber: '',
+      iban: '',
+      instructions: '',
+      enabled: true,
+    }]);
+  };
+
+  const updatePaymentAccount = (id: string, updates: Partial<SellerPaymentAccount>) => {
+    setPaymentAccounts((accounts) => accounts.map((account) =>
+      account.id === id ? { ...account, ...updates } : account,
+    ));
+  };
+
+  const savePaymentAccounts = async () => {
+    setPaymentAccountsSaving(true);
+    try {
+      const result = await apiRequest<{ accounts: SellerPaymentAccount[] }>(
+        '/api/seller/payment-accounts',
+        {
+          method: 'PUT',
+          body: JSON.stringify({ accounts: paymentAccounts }),
+        },
+      );
+      setPaymentAccounts(result.accounts);
+      toast.success('Payment accounts saved.');
+    } catch (error) {
+      console.error('Could not save seller payment accounts:', error);
+      toast.error(error instanceof Error ? error.message : 'Could not save payment accounts.');
+    } finally {
+      setPaymentAccountsSaving(false);
+    }
+  };
+
+  const reviewSellerPayment = async (orderId: string, decision: 'approve' | 'reject') => {
+    const confirmation = decision === 'approve'
+      ? 'Approve this payment only if you have independently verified that the money was received in your actual payment account. A transfer reference is not proof of receipt.'
+      : 'Reject this seller payment? This reviewed payment cannot be edited or resubmitted; the buyer will need to place a new order.';
+    if (!window.confirm(confirmation)) return;
+
+    try {
+      await apiRequest(`/api/seller/orders/${encodeURIComponent(orderId)}/payment-review`, {
+        method: 'POST',
+        body: JSON.stringify({ decision }),
+      });
+      toast.success(decision === 'approve' ? 'Your seller payment was approved.' : 'Your seller payment was rejected.');
+      await loadSellerOrders();
+    } catch (error) {
+      console.error('Could not review seller payment:', error);
+      toast.error(error instanceof Error ? error.message : 'Could not review this seller payment.');
+    }
   };
 
 if (!isApprovedSeller) {
@@ -489,22 +589,21 @@ if (!isApprovedSeller) {
   );
 }
 
-const grossOrderValue = sellerOrders.reduce(
-  (sum, order) =>
-    sum +
-    (order.items || []).reduce(
+const grossOrderValues = sellerOrders.reduce(
+  (totals, order) => {
+    if (order.currency !== 'PKR' && order.currency !== 'USD') return totals;
+    const currency = order.currency;
+    const amount = (order.items || []).reduce(
       (lineSum: number, line: any) =>
         line.product?.sellerId === user?.uid
-          ? lineSum +
-          Number(
-            line.lineTotal ??
-            Number(line.product?.price || 0) *
-            Number(line.quantity || 0)
-          )
+          ? lineSum + Number(line.lineTotal ?? 0)
           : lineSum,
       0
-    ),
-  0
+    );
+    totals[currency] += amount;
+    return totals;
+  },
+  { PKR: 0, USD: 0 }
 );
 
 const awaitingFulfillment = sellerOrders.filter(
@@ -549,7 +648,11 @@ return (
         },
         {
           title: 'Gross order value',
-          value: formatPKR(grossOrderValue),
+          value: (
+            <span className="text-base">
+              {formatCurrency(grossOrderValues.PKR, 'PKR')} · {formatCurrency(grossOrderValues.USD, 'USD')}
+            </span>
+          ),
           icon: <DollarSign className="h-5 w-5" />,
           color: 'bg-green-50 text-green-600',
         },
@@ -749,15 +852,30 @@ return (
                   type="number"
                   min="0.01"
                   step="0.01"
-                  placeholder="Selling Price (PKR) *"
-                  value={formData.price}
+                  placeholder="Selling Price (PKR)"
+                  value={formData.pricePKR}
                   onChange={(event) =>
                     setFormData({
                       ...formData,
-                      price: event.target.value,
+                      pricePKR: event.target.value,
                     })
                   }
-                  required
+                />
+
+                <Input
+                  id="product-price-usd-input"
+                  aria-label="Selling price in US dollars"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  placeholder="Selling Price (USD)"
+                  value={formData.priceUSD}
+                  onChange={(event) =>
+                    setFormData({
+                      ...formData,
+                      priceUSD: event.target.value,
+                    })
+                  }
                 />
 
                 <Input
@@ -833,10 +951,9 @@ return (
                 </div>
 
                 <p className="text-xs text-muted-foreground sm:col-span-2">
-                  Prices are entered in Pakistani rupees (PKR). Leave
-                  Original Price blank if you are not offering a discount.
-                  Only mark a product Halal Certified if you can support
-                  that claim.
+                  Enter separate market prices where you sell. No currency conversion is performed.
+                  Original Price is optional and applies only to PKR. Only mark a product Halal
+                  Certified if you can support that claim.
                 </p>
 
                 <Button
@@ -917,7 +1034,7 @@ return (
                     </td>
 
                     <td className="px-4 py-3 font-bold">
-                      {formatPKR(Number(product.price) || 0)}
+                      {formatProductPrices(product, config?.legacyPriceCurrency).join(' · ') || 'Legacy price needs currency confirmation'}
                     </td>
 
                     <td className="px-4 py-3">
@@ -999,6 +1116,116 @@ return (
       </CardContent>
     </Card>
 
+    <Card className="border-gray-100 shadow-sm">
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <CardTitle className="flex items-center gap-2">
+            <CreditCard className="h-5 w-5 text-primary" />
+            Payment accounts
+          </CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Add up to 10 accounts. Buyers can see enabled account details during checkout.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={addPaymentAccount}
+          disabled={paymentAccounts.length >= 10 || paymentAccountsLoading || paymentAccountsSaving}
+        >
+          Add account
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {paymentAccountsLoading ? (
+          <p className="py-4 text-center text-muted-foreground">Loading payment accounts…</p>
+        ) : paymentAccounts.length === 0 ? (
+          <p className="py-4 text-center text-muted-foreground">No payment accounts configured.</p>
+        ) : paymentAccounts.map((account, index) => (
+          <div key={account.id} className="space-y-3 rounded-xl border p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-semibold">Account {index + 1}</p>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={account.enabled}
+                    onChange={(event) => updatePaymentAccount(account.id, { enabled: event.target.checked })}
+                  />
+                  Enabled
+                </label>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`Remove payment account ${index + 1}`}
+                  onClick={() => setPaymentAccounts((accounts) => accounts.filter((entry) => entry.id !== account.id))}
+                >
+                  <Trash2 className="h-4 w-4 text-red-500" />
+                </Button>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1 text-sm">
+                <span>Payment method</span>
+                <select
+                  value={account.method}
+                  onChange={(event) => {
+                    const method = SELLER_PAYMENT_METHODS.find((value) => value === event.target.value);
+                    if (method) updatePaymentAccount(account.id, { method });
+                  }}
+                  className="w-full rounded-xl border border-input bg-background px-3 py-2"
+                >
+                  {SELLER_PAYMENT_METHODS.map((method) => (
+                    <option key={method} value={method}>{sellerPaymentMethodLabels[method]}</option>
+                  ))}
+                </select>
+              </label>
+              <Input
+                required
+                maxLength={100}
+                aria-label="Account holder or title"
+                placeholder="Account holder / title"
+                value={account.accountTitle}
+                onChange={(event) => updatePaymentAccount(account.id, { accountTitle: event.target.value })}
+              />
+              <Input
+                required
+                maxLength={100}
+                aria-label="Account or mobile number"
+                placeholder="Account or mobile number"
+                value={account.accountNumber}
+                onChange={(event) => updatePaymentAccount(account.id, { accountNumber: event.target.value })}
+              />
+              <Input
+                maxLength={50}
+                aria-label="IBAN (optional)"
+                placeholder="IBAN (optional)"
+                value={account.iban}
+                onChange={(event) => updatePaymentAccount(account.id, { iban: event.target.value })}
+              />
+              <textarea
+                maxLength={500}
+                aria-label="Payment instructions (optional)"
+                placeholder="Payment instructions (optional)"
+                value={account.instructions}
+                onChange={(event) => updatePaymentAccount(account.id, { instructions: event.target.value })}
+                className="min-h-10 rounded-xl border border-input bg-background px-3 py-2 text-sm sm:col-span-2"
+                rows={2}
+              />
+            </div>
+          </div>
+        ))}
+        <Button
+          type="button"
+          onClick={() => void savePaymentAccounts()}
+          disabled={paymentAccountsSaving || paymentAccountsLoading}
+        >
+          {paymentAccountsSaving ? 'Saving…' : 'Save payment accounts'}
+        </Button>
+      </CardContent>
+    </Card>
+
     {/* Seller orders */}
     <Card className="border-gray-100 shadow-sm">
       <CardHeader className="flex flex-row items-center justify-between">
@@ -1032,6 +1259,13 @@ return (
 
         {sellerOrders.map((order) => {
           const fulfillment = order.fulfillmentStatus || 'pending';
+          const sellerPayment = order.sellerPayment;
+          const sellerPaymentStatus = sellerPayment?.status;
+          const canFulfill = order.paymentMethod === 'manual_payment'
+            ? sellerPaymentStatus === 'paid'
+            : order.paymentMethod === 'bank_transfer'
+              ? order.paymentStatus === 'paid'
+              : true;
 
           const nextStatus: Record<string, string> = {
             pending: 'processing',
@@ -1062,8 +1296,35 @@ return (
 
                 <p className="text-sm capitalize">
                   Your fulfillment: {fulfillment} · Payment:{' '}
-                  {order.paymentStatus || 'unknown'}
+                  {sellerPaymentStatus || order.paymentStatus || 'unknown'}
                 </p>
+                {sellerPayment && (
+                  <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-3 text-sm">
+                    <p>Seller subtotal: {formatCurrency(Number(sellerPayment.subtotal), order.currency)}</p>
+                    <p>Allocated tax: {formatCurrency(Number(sellerPayment.taxAmount), order.currency)}</p>
+                    <p className="font-semibold">Amount due: {formatCurrency(Number(sellerPayment.amount), order.currency)}</p>
+                    <p>{sellerPaymentMethodLabels[sellerPayment.paymentAccount.method]} · {sellerPayment.paymentAccount.accountTitle}</p>
+                    <p>Account/mobile: {sellerPayment.paymentAccount.accountNumber}</p>
+                    {sellerPayment.paymentAccount.iban && <p>IBAN: {sellerPayment.paymentAccount.iban}</p>}
+                    {sellerPayment.paymentAccount.instructions && <p>{sellerPayment.paymentAccount.instructions}</p>}
+                    <p>Buyer transfer reference: {sellerPayment.transferReference}</p>
+                    {sellerPaymentStatus === 'pending_review' && (
+                      <div className="flex flex-wrap gap-2 pt-2">
+                        <Button size="sm" onClick={() => void reviewSellerPayment(order.id, 'approve')}>
+                          Approve payment
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => void reviewSellerPayment(order.id, 'reject')}>
+                          Reject payment
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!canFulfill && (
+                  <p className="mt-1 text-xs text-amber-800">
+                    Fulfillment is blocked until your seller payment is confirmed as received.
+                  </p>
+                )}
 
                 <p className="text-xs text-muted-foreground">
                   {order.shippingAddress?.name}
@@ -1082,6 +1343,7 @@ return (
               {nextStatus[fulfillment] && (
                 <Button
                   size="sm"
+                  disabled={!canFulfill}
                   onClick={() =>
                     void updateOrderStatus(
                       order.id,

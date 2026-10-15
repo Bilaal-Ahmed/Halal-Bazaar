@@ -6,6 +6,7 @@ import { apiRequest } from '../lib/api';
 import { Order } from '../types';
 import { Package, ArrowLeft, Truck, CreditCard } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatCurrency } from '../lib/currency';
 
 export default function OrdersPage() {
   const { orderId } = useParams();
@@ -61,7 +62,7 @@ export default function OrdersPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
           <p><span className="font-semibold">Fulfillment:</span> <span className="capitalize">{order.status}</span></p>
           <p><span className="font-semibold">Payment:</span> <span className="capitalize">{order.paymentStatus?.replaceAll('_', ' ')}</span></p>
-          <p><span className="font-semibold">Total:</span> {order.currency} {Number(order.totalAmount).toFixed(2)}</p>
+          <p><span className="font-semibold">Total:</span> {formatCurrency(Number(order.totalAmount), order.currency)}</p>
         </div>
         <div className="rounded-xl bg-slate-50 p-3">
           <p className="flex items-center gap-2 font-semibold text-sm"><Package className="w-4 h-4" /> Items</p>
@@ -69,11 +70,60 @@ export default function OrdersPage() {
             {order.items?.map((line, index) => (
               <li key={`${line.product.id}-${index}`} className="flex justify-between gap-2">
                 <span>{line.product.name} × {line.quantity}</span>
-                <span>{order.currency} {Number(line.lineTotal || line.product.price * line.quantity).toFixed(2)}</span>
+                <span>{formatCurrency(Number(line.lineTotal ?? (line.product.price ?? 0) * line.quantity), order.currency)}</span>
               </li>
             ))}
           </ul>
         </div>
+        {order.sellerPayments && Object.keys(order.sellerPayments).length > 0 && (
+          <div className="rounded-xl border p-3">
+            <h3 className="font-semibold text-sm">Seller payments</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Transfer each seller’s amount separately. The overall order is paid only after every seller confirms receipt.
+            </p>
+            <div className="mt-3 space-y-3">
+              {Object.entries(order.sellerPayments).map(([sellerId, payment]) => {
+                const sellerName = order.items.find(
+                  (line) => line.product.sellerId === sellerId,
+                )?.product.sellerName || 'Seller';
+                return (
+                  <div key={sellerId} className="rounded-lg bg-slate-50 p-3 text-sm">
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <strong>{sellerName}</strong>
+                      <span className="font-semibold">
+                        {formatCurrency(Number(payment.amount), order.currency)}
+                      </span>
+                    </div>
+                    <p className="mt-1 capitalize text-muted-foreground">
+                      Payment status: {payment.status.replaceAll('_', ' ')}
+                    </p>
+                    {payment.status === 'pending_review' && (
+                      <p className="mt-1 text-amber-800">
+                        Waiting for this seller to independently verify receipt of your transfer.
+                      </p>
+                    )}
+                    {payment.status === 'rejected' && (
+                      <p className="mt-1 text-red-700">
+                        This seller rejected the payment. Contact the seller before placing a new order; this reviewed payment cannot be resubmitted.
+                      </p>
+                    )}
+                    {detailed && (
+                      <>
+                        <p className="mt-2">
+                          {payment.paymentAccount.method.replaceAll('_', ' ')} · {payment.paymentAccount.accountTitle}
+                        </p>
+                        <p>Account/mobile: {payment.paymentAccount.accountNumber}</p>
+                        {payment.paymentAccount.iban && <p>IBAN: {payment.paymentAccount.iban}</p>}
+                        {payment.paymentAccount.instructions && <p>{payment.paymentAccount.instructions}</p>}
+                        <p className="mt-1">Your transfer reference: {payment.transferReference}</p>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {detailed && (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -84,7 +134,7 @@ export default function OrdersPage() {
               <div className="rounded-xl border p-3">
                 <h3 className="font-semibold flex items-center gap-2"><CreditCard className="w-4 h-4" /> Payment information</h3>
                 <p className="mt-2 text-muted-foreground capitalize">{order.paymentMethod?.replaceAll('_', ' ')}<br />Payment status: {order.paymentStatus?.replaceAll('_', ' ')}</p>
-                {order.transferReference && <p className="mt-1 text-muted-foreground">Transfer reference: {order.transferReference}</p>}
+                {order.paymentMethod !== 'manual_payment' && order.transferReference && <p className="mt-1 text-muted-foreground">Transfer reference: {order.transferReference}</p>}
               </div>
             </div>
             <div className="rounded-xl border p-3 text-sm">
@@ -98,8 +148,8 @@ export default function OrdersPage() {
           </>
         )}
         <div className="flex justify-between border-t pt-3 text-sm">
-          <span>Subtotal {order.currency} {Number(order.subtotal).toFixed(2)} + tax {order.currency} {Number(order.taxAmount).toFixed(2)}</span>
-          <strong>{order.currency} {Number(order.totalAmount).toFixed(2)}</strong>
+          <span>Subtotal {formatCurrency(Number(order.subtotal), order.currency)} + tax {formatCurrency(Number(order.taxAmount), order.currency)}{order.taxRate != null ? ` (${(order.taxRate * 100).toFixed(2)}%)` : ''}</span>
+          <strong>{formatCurrency(Number(order.totalAmount), order.currency)}</strong>
         </div>
       </CardContent>
     </Card>

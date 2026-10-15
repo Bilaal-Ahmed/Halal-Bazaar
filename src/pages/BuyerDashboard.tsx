@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/button';
 import { useAuth } from '../contexts/AuthContext';
 import { apiRequest } from '../lib/api';
 import { Order } from '../types';
+import { formatCurrency } from '../lib/currency';
 
 export default function BuyerDashboard() {
   const { user, profile } = useAuth();
@@ -28,7 +29,11 @@ export default function BuyerDashboard() {
     return () => { active = false; };
   }, []);
 
-  const outstandingPayments = orders.filter(order => order.paymentStatus === 'pending_review' || order.paymentStatus === 'unpaid').length;
+  const outstandingPayments = orders.filter(order =>
+    order.paymentStatus === 'pending_review'
+    || order.paymentStatus === 'unpaid'
+    || order.paymentStatus === 'rejected',
+  ).length;
   const quickLinks = [
     { title: 'Browse products', description: 'Discover current marketplace listings.', href: '/products', icon: ShoppingBag },
     { title: 'Order history', description: 'Review purchases and delivery updates.', href: '/orders', icon: ClipboardList },
@@ -99,9 +104,14 @@ export default function BuyerDashboard() {
                   <div>
                     <p className="font-semibold">Order {order.id.slice(0, 12)}</p>
                     <p className="mt-1 text-sm text-muted-foreground">{order.items?.length || 0} item(s) · {order.status} · payment {order.paymentStatus?.replaceAll('_', ' ')}</p>
+                    {order.sellerPayments && Object.entries(order.sellerPayments).map(([sellerId, payment]) => (
+                      <p key={sellerId} className="mt-1 text-xs text-muted-foreground">
+                        Seller payment: {formatCurrency(Number(payment.amount), order.currency)} · {payment.status.replaceAll('_', ' ')}
+                      </p>
+                    ))}
                   </div>
                   <div className="flex items-center justify-between gap-4 sm:justify-end">
-                    <strong>{order.currency} {Number(order.totalAmount).toFixed(2)}</strong>
+                    <strong>{formatCurrency(Number(order.totalAmount), order.currency)}</strong>
                     <Link to={`/orders/${encodeURIComponent(order.id)}`}><Button variant="outline" size="sm">Details</Button></Link>
                   </div>
                 </CardContent>

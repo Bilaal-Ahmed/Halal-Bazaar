@@ -10,6 +10,5 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_PROJECT_ID?: string;
   readonly VITE_FIREBASE_STORAGE_BUCKET?: string;
   readonly VITE_FIRESTORE_DATABASE_ID?: string;
-  readonly VITE_ORDER_CURRENCY?: string;
   readonly VITE_SUPPORT_EMAIL?: string;
 }

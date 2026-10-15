@@ -2,8 +2,18 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCart } from '../contexts/CartContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useCheckoutConfig } from '../contexts/CheckoutConfigContext';
 import { apiRequest } from '../lib/api';
-import { formatCurrency } from '../lib/currency';
+import {
+  allocateSellerTaxCents,
+  findEnabledPaymentAccount,
+  type SellerPaymentAccount,
+} from '../lib/sellerPayments';
+import {
+  calculateTaxCents,
+  formatCurrency,
+  getProductPrice,
+} from '../lib/currency';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
 import {
@@ -16,6 +26,19 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+interface CheckoutSeller {
+  sellerId: string;
+  sellerName: string;
+  accounts: SellerPaymentAccount[];
+}
+
+const paymentMethodLabels: Record<SellerPaymentAccount['method'], string> = {
+  jazzcash: 'JazzCash',
+  easypaisa: 'Easypaisa',
+  raast: 'Raast',
+  bank_transfer: 'Bank transfer',
+};
+
 export default function Cart() {
   const navigate = useNavigate();
   const {
@@ -24,57 +47,150 @@ export default function Cart() {
     updateQuantity,
     clearCart,
     totalItems,
-    totalPrice,
   } = useCart();
 
   const { user, profile, login } = useAuth();
+  const { config, error: checkoutConfigError } = useCheckoutConfig();
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'cash_on_delivery' | 'bank_transfer'>('cash_on_delivery');
-  const [transferReference, setTransferReference] = useState('');
-  const [checkoutConfig, setCheckoutConfig] = useState({
-    currency: import.meta.env.VITE_ORDER_CURRENCY || 'USD',
-    taxRate: 0.05,
-    bankTransferEnabled: false,
-  });
+  const [paymentMethod, setPaymentMethod] = useState<'cash_on_delivery' | 'manual_payment'>('cash_on_delivery');
+  const [checkoutSellers, setCheckoutSellers] = useState<CheckoutSeller[]>([]);
+  const [selectedPaymentAccountIds, setSelectedPaymentAccountIds] = useState<Record<string, string>>({});
+  const [transferReferences, setTransferReferences] = useState<Record<string, string>>({});
+  const [paymentAccountsLoading, setPaymentAccountsLoading] = useState(false);
+  const checkoutConfig = config || {
+    taxRates: { PKR: null as number | null, USD: null as number | null },
+    legacyPriceCurrency: null as 'PKR' | 'USD' | null,
+    cashOnDeliveryCountries: [] as string[],
+    bankTransferEnabled: { PKR: false, USD: false },
+  };
   const idempotencyKey = useRef<string | null>(null);
   const [shippingAddress, setShippingAddress] = useState({
     name: '',
     address: '',
     city: '',
     zip: '',
-    country: 'Pakistan',
+    country: 'PK',
   });
+  const updateShippingField = (field: keyof typeof shippingAddress, value: string) => {
+    setShippingAddress((current) => ({ ...current, [field]: value }));
+  };
 
   useEffect(() => {
     if (!profile) return;
+    const savedCountry = profile.country?.trim() || '';
+    const normalizedCountry = /^pakistan$/i.test(savedCountry)
+      ? 'PK'
+      : /^[A-Za-z]{2}$/.test(savedCountry)
+        ? savedCountry.toUpperCase()
+        : '';
     setShippingAddress(current => ({
       name: profile.displayName || current.name,
       address: profile.defaultAddress || current.address,
       city: profile.city || current.city,
       zip: profile.postalCode || current.zip,
-      country: profile.country || current.country,
+      country: normalizedCountry,
     }));
   }, [profile]);
 
   useEffect(() => {
-    let active = true;
-    apiRequest<{ currency: string; taxRate: number; bankTransferEnabled: boolean }>('/api/checkout/config')
-      .then(config => {
-        if (!active) return;
-        setCheckoutConfig(config);
-        if (!config.bankTransferEnabled) setPaymentMethod('cash_on_delivery');
-      })
-      .catch(error => {
-        console.error('Could not load checkout configuration:', error);
-        if (active) toast.error('Checkout configuration could not be loaded.');
-      });
-    return () => { active = false; };
-  }, []);
+    if (checkoutConfigError) toast.error('Checkout configuration could not be loaded.');
+  }, [checkoutConfigError]);
 
-  const subtotal = totalPrice;
-  const estimatedTax = subtotal * checkoutConfig.taxRate;
-  const estimatedTotal = subtotal + estimatedTax;
+  const countryCode = shippingAddress.country.trim().toUpperCase() === 'PAKISTAN'
+    ? 'PK'
+    : shippingAddress.country.trim().toUpperCase();
+  const currency = countryCode === 'PK' ? 'PKR' : 'USD';
+  const taxRate = checkoutConfig.taxRates[currency];
+  const codAvailable = checkoutConfig.cashOnDeliveryCountries.includes(countryCode);
+  const cartSellerIds = [...new Set(items
+    .map(({ product }) => product.sellerId)
+    .filter((sellerId): sellerId is string => typeof sellerId === 'string' && sellerId.length > 0))]
+    .sort();
+  const cartSellerIdsKey = cartSellerIds.join(',');
+  const pricedItems = items.map(({ product, quantity }) => ({
+    product,
+    quantity,
+    unitPrice: getProductPrice(product, currency, checkoutConfig.legacyPriceCurrency),
+  }));
+  const missingMarketPrice = pricedItems.some(item => item.unitPrice === null);
+  const subtotal = pricedItems.reduce(
+    (sum, item) => sum + (item.unitPrice ?? 0) * item.quantity,
+    0
+  );
+  const subtotalCents = Math.round(subtotal * 100);
+  const estimatedTax = taxRate === null || missingMarketPrice
+    ? null
+    : calculateTaxCents(subtotalCents, taxRate) / 100;
+  const estimatedTotal = estimatedTax === null ? null : subtotal + estimatedTax;
+  const manualPaymentAvailable = cartSellerIds.length > 0
+    && cartSellerIds.every((sellerId) => checkoutSellers.some(
+      (seller) => seller.sellerId === sellerId && seller.accounts.length > 0,
+    ));
+
+  const sellerPaymentEstimates: Record<string, number> = (() => {
+    if (taxRate === null || missingMarketPrice || cartSellerIds.length === 0) return {};
+    const sellerSubtotalsCents = Object.create(null) as Record<string, number>;
+    for (const sellerId of cartSellerIds) sellerSubtotalsCents[sellerId] = 0;
+    for (const item of pricedItems) {
+      const price = item.unitPrice;
+      if (
+        price === null
+        || !Object.prototype.hasOwnProperty.call(sellerSubtotalsCents, item.product.sellerId)
+      ) continue;
+      sellerSubtotalsCents[item.product.sellerId] += Math.round(price * 100) * item.quantity;
+    }
+    const sellerTaxCents = allocateSellerTaxCents(
+      sellerSubtotalsCents,
+      calculateTaxCents(subtotalCents, taxRate),
+    );
+    return Object.fromEntries(cartSellerIds.map((sellerId) => [
+      sellerId,
+      (sellerSubtotalsCents[sellerId] + sellerTaxCents[sellerId]) / 100,
+    ]));
+  })();
+
+  useEffect(() => {
+    if (!checkoutOpen || !user?.emailVerified || !cartSellerIdsKey) {
+      setCheckoutSellers([]);
+      setPaymentAccountsLoading(false);
+      return;
+    }
+
+    let active = true;
+    setPaymentAccountsLoading(true);
+    apiRequest<{ sellers: CheckoutSeller[] }>(
+      `/api/checkout/payment-accounts?sellerIds=${encodeURIComponent(cartSellerIdsKey)}`,
+    )
+      .then(({ sellers }) => {
+        if (!active) return;
+        setCheckoutSellers(sellers);
+        setSelectedPaymentAccountIds((current) => Object.fromEntries(
+          sellers.map((seller) => {
+            const currentId = current[seller.sellerId];
+            const selected = seller.accounts.find((account) => account.id === currentId)
+              || seller.accounts[0];
+            return [seller.sellerId, selected?.id || ''];
+          }),
+        ));
+      })
+      .catch((error) => {
+        if (!active) return;
+        setCheckoutSellers([]);
+        toast.error(error instanceof Error ? error.message : 'Seller payment accounts could not be loaded.');
+      })
+      .finally(() => {
+        if (active) setPaymentAccountsLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [checkoutOpen, user?.uid, user?.emailVerified, cartSellerIdsKey]);
+
+  useEffect(() => {
+    if (!codAvailable && manualPaymentAvailable && paymentMethod === 'cash_on_delivery') {
+      setPaymentMethod('manual_payment');
+    }
+  }, [codAvailable, manualPaymentAvailable, paymentMethod]);
 
   const handleCheckout = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -110,20 +226,55 @@ export default function Cart() {
       return;
     }
 
+    if (taxRate === null) {
+      toast.error('Checkout for this currency is unavailable until its tax policy is configured.');
+      return;
+    }
+    if (missingMarketPrice) {
+      toast.error(`At least one product does not have a valid ${currency} price.`);
+      return;
+    }
+    if (paymentMethod === 'cash_on_delivery' && !codAvailable) {
+      toast.error('Cash on delivery is not available for this delivery destination.');
+      return;
+    }
+    if (paymentMethod === 'manual_payment') {
+      if (!manualPaymentAvailable) {
+        toast.error('Every seller in your cart must have an enabled payment account.');
+        return;
+      }
+      const missingPaymentDetails = cartSellerIds.some((sellerId) => {
+        const seller = checkoutSellers.find((entry) => entry.sellerId === sellerId);
+        const account = seller?.accounts.find(
+          (entry) => entry.id === selectedPaymentAccountIds[sellerId] && entry.enabled,
+        );
+        return !account || !transferReferences[sellerId]?.trim();
+      });
+      if (missingPaymentDetails) {
+        toast.error('Choose an enabled payment account and enter a transfer reference for each seller.');
+        return;
+      }
+    }
+
     setSubmitting(true);
 
     try {
       idempotencyKey.current ||= crypto.randomUUID();
       const result = await apiRequest<{
         order: { id: string };
-        bankTransferInstructions: string | null;
       }>('/api/orders', {
         method: 'POST',
         body: JSON.stringify({
           idempotencyKey: idempotencyKey.current,
           items: items.map(({ product, quantity }) => ({ productId: product.id, quantity })),
           paymentMethod,
-          transferReference: paymentMethod === 'bank_transfer' ? transferReference.trim() : '',
+          ...(paymentMethod === 'manual_payment' ? {
+            sellerPayments: cartSellerIds.map((sellerId) => ({
+              sellerId,
+              paymentAccountId: selectedPaymentAccountIds[sellerId],
+              transferReference: transferReferences[sellerId].trim(),
+            })),
+          } : {}),
           shippingAddress: {
             name: shippingAddress.name.trim(),
             address: shippingAddress.address.trim(),
@@ -138,8 +289,8 @@ export default function Cart() {
       idempotencyKey.current = null;
       setCheckoutOpen(false);
       toast.success(`Order placed! Reference: ${result.order.id}`);
-      if (paymentMethod === 'bank_transfer') {
-        toast.info(result.bankTransferInstructions || 'Your transfer will remain pending until an administrator verifies it.');
+      if (paymentMethod === 'manual_payment') {
+        toast.info('Transfer each seller’s amount separately. Sellers must independently verify receipt before marking payments as paid.');
       }
       navigate(`/orders/${encodeURIComponent(result.order.id)}`);
     } catch (error) {
@@ -194,7 +345,7 @@ export default function Cart() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-4">
           <AnimatePresence>
-            {items.map(({ product, quantity }) => (
+            {pricedItems.map(({ product, quantity, unitPrice }) => (
               <motion.div
                 key={product.id}
                 initial={{ opacity: 0, x: -20 }}
@@ -273,11 +424,13 @@ onError = {(e) => {
 
       <div className="text-right">
         <div className="font-black text-base">
-          {formatCurrency(product.price * quantity, checkoutConfig.currency)}
+        {unitPrice === null
+          ? `Unavailable in ${currency}`
+          : formatCurrency(unitPrice * quantity, currency)}
         </div>
-        {quantity > 1 && (
-          <div className="text-xs text-muted-foreground">
-            {formatCurrency(product.price, checkoutConfig.currency)} each
+      {quantity > 1 && unitPrice !== null && (
+        <div className="text-xs text-muted-foreground">
+          {formatCurrency(unitPrice, currency)} each
           </div>
         )}
       </div>
@@ -302,7 +455,7 @@ onError = {(e) => {
       <div className="space-y-3 text-sm">
         <div className="flex justify-between text-muted-foreground">
           <span>Subtotal ({totalItems} items)</span>
-          <span>{formatCurrency(subtotal, checkoutConfig.currency)}</span>
+          <span>{missingMarketPrice ? 'Incomplete' : formatCurrency(subtotal, currency)}</span>
         </div>
         <div className="flex justify-between text-muted-foreground">
           <span>Shipping</span>
@@ -310,11 +463,11 @@ onError = {(e) => {
         </div>
         <div className="flex justify-between text-muted-foreground">
           <span>Tax (est.)</span>
-          <span>{formatCurrency(estimatedTax, checkoutConfig.currency)}</span>
+          <span>{missingMarketPrice ? 'Price required' : estimatedTax === null ? 'Not configured' : formatCurrency(estimatedTax, currency)}</span>
         </div>
         <div className="border-t border-dashed pt-3 flex justify-between font-black text-lg">
           <span>Total</span>
-          <span>{formatCurrency(estimatedTotal, checkoutConfig.currency)}</span>
+          <span>{estimatedTotal === null ? 'Not available' : formatCurrency(estimatedTotal, currency)}</span>
         </div>
       </div>
 
@@ -340,10 +493,7 @@ onError = {(e) => {
             placeholder="Full name"
             value={shippingAddress.name}
             onChange={(e) =>
-              setShippingAddress({
-                ...shippingAddress,
-                name: e.target.value,
-              })
+              updateShippingField('name', e.target.value)
             }
             className="w-full rounded-lg border px-3 py-2 text-sm"
           />
@@ -355,10 +505,7 @@ onError = {(e) => {
             placeholder="Complete delivery address"
             value={shippingAddress.address}
             onChange={(e) =>
-              setShippingAddress({
-                ...shippingAddress,
-                address: e.target.value,
-              })
+              updateShippingField('address', e.target.value)
             }
             className="w-full rounded-lg border px-3 py-2 text-sm"
             rows={3}
@@ -371,10 +518,7 @@ onError = {(e) => {
             placeholder="City"
             value={shippingAddress.city}
             onChange={(e) =>
-              setShippingAddress({
-                ...shippingAddress,
-                city: e.target.value,
-              })
+              updateShippingField('city', e.target.value)
             }
             className="w-full rounded-lg border px-3 py-2 text-sm"
           />
@@ -386,31 +530,26 @@ onError = {(e) => {
             placeholder="Postal code"
             value={shippingAddress.zip}
             onChange={(e) =>
-              setShippingAddress({
-                ...shippingAddress,
-                zip: e.target.value,
-              })
+              updateShippingField('zip', e.target.value)
             }
             className="w-full rounded-lg border px-3 py-2 text-sm"
           />
 
           <input
             required
-            maxLength={60}
-            autoComplete="country-name"
-            placeholder="Country"
+            maxLength={2}
+            pattern="[A-Za-z]{2}"
+            autoComplete="country"
+            placeholder="ISO country code (e.g. PK or US)"
             value={shippingAddress.country}
             onChange={(e) =>
-              setShippingAddress({
-                ...shippingAddress,
-                country: e.target.value,
-              })
+              updateShippingField('country', e.target.value)
             }
             className="w-full rounded-lg border px-3 py-2 text-sm"
           />
 
           <fieldset className="space-y-2">
-            <legend className="font-semibold text-sm">Payment method</legend>
+            <legend className="font-semibold text-sm">Payment method · {countryCode === 'PK' ? 'Pakistan / PKR' : 'International / USD'}</legend>
             <label className="flex items-center gap-2 rounded-lg border p-3 text-sm cursor-pointer">
               <input
                 type="radio"
@@ -418,43 +557,104 @@ onError = {(e) => {
                 value="cash_on_delivery"
                 checked={paymentMethod === 'cash_on_delivery'}
                 onChange={() => setPaymentMethod('cash_on_delivery')}
+                disabled={!codAvailable}
               />
-              Cash on Delivery
+              Cash on Delivery {!codAvailable && '(not available for this destination)'}
             </label>
-            <label className={`flex items-center gap-2 rounded-lg border p-3 text-sm ${checkoutConfig.bankTransferEnabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
+            <label className={`flex items-center gap-2 rounded-lg border p-3 text-sm ${manualPaymentAvailable || paymentAccountsLoading || !user ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
               <input
                 type="radio"
                 name="paymentMethod"
-                value="bank_transfer"
-                checked={paymentMethod === 'bank_transfer'}
-                onChange={() => setPaymentMethod('bank_transfer')}
-                disabled={!checkoutConfig.bankTransferEnabled}
+                value="manual_payment"
+                checked={paymentMethod === 'manual_payment'}
+                onChange={() => setPaymentMethod('manual_payment')}
+                disabled={!manualPaymentAvailable && !paymentAccountsLoading && Boolean(user?.emailVerified)}
               />
-              Manual Bank Transfer {checkoutConfig.bankTransferEnabled ? '(review required)' : '(not configured)'}
+              Manual Payment {manualPaymentAvailable ? '(seller verifies receipt)' : paymentAccountsLoading ? '(loading seller accounts)' : '(not available for every seller)'}
             </label>
           </fieldset>
-          {!checkoutConfig.bankTransferEnabled && <p className="text-xs text-muted-foreground">Manual transfer checkout is disabled until the operator configures bank instructions on the server.</p>}
-
-          {paymentMethod === 'bank_transfer' && (
-            <input
-              required
-              maxLength={120}
-              placeholder="Transfer reference"
-              value={transferReference}
-              onChange={event => setTransferReference(event.target.value)}
-              className="w-full rounded-lg border px-3 py-2 text-sm"
-            />
+          {paymentMethod === 'manual_payment' && paymentAccountsLoading && <p className="text-sm text-muted-foreground">Loading enabled payment accounts for the sellers in your cart…</p>}
+          {paymentMethod === 'manual_payment' && !paymentAccountsLoading && !manualPaymentAvailable && (
+            <p role="alert" className="text-sm text-amber-800">Manual payment is unavailable because at least one seller has no enabled payment account.</p>
           )}
+          {taxRate === null && <p role="alert" className="text-sm text-amber-800">Checkout is unavailable because the operator has not configured the {currency} tax policy. No tax rate is assumed.</p>}
+          {missingMarketPrice && <p role="alert" className="text-sm text-amber-800">One or more cart items have no verified {currency} price. Ask the seller to add a market price or select a different delivery destination.</p>}
+
+          {paymentMethod === 'manual_payment' && checkoutSellers
+            .filter((seller) => cartSellerIds.includes(seller.sellerId))
+            .map((seller) => {
+              const selectedAccount = findEnabledPaymentAccount(
+                seller.accounts,
+                selectedPaymentAccountIds[seller.sellerId] || '',
+              );
+              return (
+                <section key={seller.sellerId} className="space-y-3 rounded-xl border p-3">
+                  <div>
+                    <h4 className="font-semibold">{seller.sellerName || 'Seller'}</h4>
+                    <p className="text-sm text-muted-foreground">
+                      Estimated amount due: {sellerPaymentEstimates[seller.sellerId] === undefined
+                        ? 'Not available'
+                        : formatCurrency(sellerPaymentEstimates[seller.sellerId], currency)}
+                    </p>
+                  </div>
+                  <label className="block space-y-1 text-sm">
+                    <span>Payment account</span>
+                    <select
+                      aria-label={`Payment account for ${seller.sellerName || seller.sellerId}`}
+                      value={selectedPaymentAccountIds[seller.sellerId] || ''}
+                      onChange={(event) => {
+                        setSelectedPaymentAccountIds((current) => ({
+                          ...current,
+                          [seller.sellerId]: event.target.value,
+                        }));
+                      }}
+                      className="w-full rounded-lg border bg-background px-3 py-2"
+                    >
+                      {seller.accounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {paymentMethodLabels[account.method]} · {account.accountTitle}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedAccount && (
+                    <div className="rounded-lg bg-slate-50 p-3 text-sm">
+                      <p><strong>{paymentMethodLabels[selectedAccount.method]}</strong> · {selectedAccount.accountTitle}</p>
+                      <p>Account/mobile: {selectedAccount.accountNumber}</p>
+                      {selectedAccount.iban && <p>IBAN: {selectedAccount.iban}</p>}
+                      {selectedAccount.instructions && <p className="mt-1">{selectedAccount.instructions}</p>}
+                    </div>
+                  )}
+                  <label className="block space-y-1 text-sm">
+                    <span>Transfer reference for this seller</span>
+                    <input
+                      required
+                      maxLength={120}
+                      value={transferReferences[seller.sellerId] || ''}
+                      onChange={(event) => {
+                        setTransferReferences((current) => ({
+                          ...current,
+                          [seller.sellerId]: event.target.value,
+                        }));
+                      }}
+                      className="w-full rounded-lg border px-3 py-2"
+                    />
+                  </label>
+                </section>
+              );
+            })}
 
           <div className="rounded-lg bg-slate-50 p-3 text-sm">
             <p className="font-semibold">
-              {paymentMethod === 'cash_on_delivery' ? 'Pay in cash when delivered' : 'Manual bank-transfer review'}
+              {paymentMethod === 'cash_on_delivery' ? 'Pay in cash when delivered' : 'Pay each seller separately'}
             </p>
             <p className="text-muted-foreground mt-1">
-              JazzCash and Easypaisa are not enabled until their merchant integrations are configured and verified.
+              {paymentMethod === 'manual_payment'
+                ? 'Transfer each seller’s amount separately using that seller’s account. A transfer reference is not proof of receipt; each seller must independently verify the funds before approving their payment.'
+                : 'Pay the full order amount in cash when it is delivered.'}
             </p>
             <p className="font-bold mt-2">
-              Estimated total: {formatCurrency(estimatedTotal, checkoutConfig.currency)}
+              Estimated total: {estimatedTotal === null ? 'Not available' : formatCurrency(estimatedTotal, currency)}
             </p>
           </div>
 
@@ -471,7 +671,7 @@ onError = {(e) => {
 
           <Button
             type="submit"
-            disabled={submitting || Boolean(user && !user.emailVerified)}
+            disabled={submitting || Boolean(user && !user.emailVerified) || missingMarketPrice || taxRate === null || (paymentMethod === 'cash_on_delivery' && !codAvailable) || (paymentMethod === 'manual_payment' && Boolean(user) && (!manualPaymentAvailable || paymentAccountsLoading))}
             className="w-full font-bold"
           >
             {submitting

@@ -19,7 +19,7 @@
 
 ### 🛍️ Shopping Experience
 - **Product Catalog** — Search, category and price filters, sorting, published listings, and product details
-- **Cart and Checkout** — localStorage cart, server-validated pricing/stock, idempotent order creation, COD, and configured manual bank transfer
+- **Cart and Checkout** — localStorage cart, server-validated pricing/stock, idempotent orders, COD, and seller-specific manual payments
 - **Listing claims** — Sellers may mark listings as halal certified; this application does not independently verify certificates
 - **Order tracking** — Buyer order history/details and seller fulfillment status updates
 - **Buyer dashboard** — Separate buyer workspace for browsing, order history, payment follow-up, and saved addresses; approved sellers can use it too
@@ -35,6 +35,7 @@
 - **Product management** — Approved sellers create/edit listings, manage inventory, publish/unpublish, and delete their own products
 - **Category Tags** — Assign products to 6 categories with icon selectors
 - **Seller profile and fulfillment** — Manage store information and progress orders
+- **Payment accounts and reviews** — Maintain up to 10 JazzCash, Easypaisa, Raast, or bank-transfer accounts; review only payments for the seller's own order lines
 - **Order value** — Gross order value is calculated from actual orders; no review/rating feature is currently offered
 
 ### ℹ️ Public information
@@ -122,17 +123,27 @@ FIREBASE_PROJECT_ID="your-existing-firebase-project-id"
 FIRESTORE_DATABASE_ID=""
 GOOGLE_APPLICATION_CREDENTIALS="C:/secure/path/to/firebase-admin-service-account.json"
 ADMIN_EMAILS="ba341914@gmail.com"
-ORDER_CURRENCY="USD"
-ORDER_TAX_RATE="0.05"
-VITE_ORDER_CURRENCY="USD"
+PKR_ORDER_TAX_RATE="0.05"
+# Required before international/USD checkout is enabled; set only after tax-policy review.
+USD_ORDER_TAX_RATE=""
+# Set only after checking existing Firestore records; never infer from the old amount alone.
+LEGACY_PRODUCT_PRICE_CURRENCY=""
+COD_ALLOWED_COUNTRIES="PK"
+DOMESTIC_BANK_TRANSFER_INSTRUCTIONS=""
+INTERNATIONAL_BANK_TRANSFER_INSTRUCTIONS=""
 # Optional public support contact shown on the Contact and footer pages.
 VITE_SUPPORT_EMAIL="support@example.com"
-# BANK_TRANSFER_INSTRUCTIONS="Bank/account details for manual transfer"
 ```
 
 `FIRESTORE_DATABASE_ID` may be left empty; the server then reads the existing database ID from `firebase-applet-config.json`. Use a server-only Google Application Default Credential or a service account stored outside the repository. Never prefix Admin SDK settings with `VITE_`, put service-account JSON in the client config, or commit credentials. `ADMIN_EMAILS` is checked by Express after Firebase ID-token verification; it is server-only and defaults to the original verified administrator account above. `VITE_ADMIN_EMAILS` is not an authorization control and is not used.
 
-Manual bank transfer is disabled until `BANK_TRANSFER_INSTRUCTIONS` is set on the server; those instructions are shown to buyers, and transfers remain pending until an administrator reviews them. JazzCash and Easypaisa are deliberately unavailable until you have the official merchant integration specifications, credentials, callback configuration, and a verified signature-validation implementation. No real gateway payment is currently processed. Firebase Storage is not configured; product/store images must use externally hosted image URLs. `GEMINI_API_KEY` is read only by the server and chat requests are rate-limited through `/api/chat`; never prefix it with `VITE_`. `VITE_SUPPORT_EMAIL` is public and optional; configure a monitored address before launch.
+Products may have separately entered `pricePKR` and `priceUSD` values. No price is converted. Existing records with only `price` are not rewritten; set `LEGACY_PRODUCT_PRICE_CURRENCY` only after inspecting their amounts and confirming their unit. Until confirmed, such records cannot be ordered in either market. Pakistan addresses use PKR; other valid ISO 3166-1 alpha-2 country codes use USD. `COD_ALLOWED_COUNTRIES` defaults to `PK`.
+
+Before rollout, inspect product documents in the intended Firebase project and decide whether `price` has a known unit. No production records were migrated by this change. The old single `BANK_TRANSFER_INSTRUCTIONS` value is no longer used; configure the domestic and/or international server-only variable independently after confirming that the business can receive and verify those transfer types. `ORDER_TAX_RATE` remains accepted as a compatibility fallback for PKR; prefer `PKR_ORDER_TAX_RATE`.
+
+PKR orders use `PKR_ORDER_TAX_RATE` (the prior server default is retained for continuity; it is not a tax-compliance determination). International/USD checkout is blocked until `USD_ORDER_TAX_RATE` is explicitly configured after business tax review; no international rate is inferred or assumed equal to the PKR rate. The operator must decide and document the appropriate tax treatment before enabling that market.
+
+New manual-payment orders use the approved sellers' enabled payment accounts. Buyers select one account and submit a separate transfer reference for each seller; seller subtotals and proportionally allocated tax are calculated by the server. Each seller must independently verify receipt in their actual account before approving only their own payment. A reference is not proof of payment, and partial seller approval never marks the entire order paid. A reviewed/rejected payment record cannot be resubmitted; the buyer must contact the seller and, if needed, place a new order. Legacy `bank_transfer` orders remain compatible with the configured `DOMESTIC_BANK_TRANSFER_INSTRUCTIONS` / `INTERNATIONAL_BANK_TRANSFER_INSTRUCTIONS` and administrator review workflow. JazzCash and Easypaisa are manual account types only; no live gateway payment is processed. Firebase Storage is not configured; product/store images must use externally hosted image URLs. `GEMINI_API_KEY` is read only by the server and chat requests are rate-limited through `/api/chat`; never prefix it with `VITE_`. `VITE_SUPPORT_EMAIL` is public and optional; configure a monitored address before launch.
 
 To add another administrator, configure the verified account email in server-only `ADMIN_EMAILS` and provision that user's Firestore profile with `role: "admin"` using a trusted Firebase Admin SDK process. Do not use a browser environment variable or client write to grant the role.
 
@@ -140,7 +151,7 @@ The `firebase-applet-config.json` Firebase web app settings (including Firebase'
 
 ### 4. Configure Firebase
 
-Keep the checked-in `firebase-applet-config.json` pointed at the existing Firebase project and named Firestore database. Do not replace its project or database with the `(default)` database. The client config identifies a Firebase app and is public; access control is provided by the rules below, and privileged operations use the Admin SDK on the server. Keep `ORDER_CURRENCY` and `VITE_ORDER_CURRENCY` equal to the currency used by the catalog.
+Keep the checked-in `firebase-applet-config.json` pointed at the existing Firebase project and named Firestore database. Do not replace its project or database with the `(default)` database. The client config identifies a Firebase app and is public; access control is provided by the rules below, and privileged operations use the Admin SDK on the server.
 
 ### 5. Enable Firebase Services
 
@@ -219,10 +230,10 @@ gcloud run deploy halal-bazaar-staging \
   --project=STAGING_PROJECT_ID --region=REGION \
   --service-account=STAGING_RUNTIME_SERVICE_ACCOUNT \
   --allow-unauthenticated \
-  --set-env-vars=NODE_ENV=production,FIREBASE_PROJECT_ID=STAGING_PROJECT_ID,FIRESTORE_DATABASE_ID=STAGING_DATABASE_ID,ORDER_CURRENCY=USD,ORDER_TAX_RATE=0.05
+  --set-env-vars=NODE_ENV=production,FIREBASE_PROJECT_ID=STAGING_PROJECT_ID,FIRESTORE_DATABASE_ID=STAGING_DATABASE_ID,PKR_ORDER_TAX_RATE=0.05
 ```
 
-Grant the dedicated runtime identity only the Firestore access needed for the staging database and Firebase Auth user lookup/revocation checks; do not upload a service-account key. Add optional `GEMINI_API_KEY` through Secret Manager using Cloud Run's `--set-secrets` option. Keep `BANK_TRANSFER_INSTRUCTIONS` unset unless a staging-only payment-review test is required. Smoke-test health, sign-in, buyer/seller flows, and rules against staging; never import production data. The Dockerfile/commands prepare staging but have not been deployed or run here.
+Grant the dedicated runtime identity only the Firestore access needed for the staging database and Firebase Auth user lookup/revocation checks; do not upload a service-account key. Add optional `GEMINI_API_KEY` through Secret Manager using Cloud Run's `--set-secrets` option. Configure market tax and bank-transfer settings only with staging-specific policy and instructions. Smoke-test health, sign-in, buyer/seller flows, and rules against staging; never import production data. The Dockerfile/commands prepare staging but have not been deployed or run here.
 
 Server environment variables actually read by the application:
 
@@ -235,15 +246,18 @@ Server environment variables actually read by the application:
 | `GOOGLE_APPLICATION_CREDENTIALS` | ADC service-account file path | Optional credential mechanism; prefer platform workload identity |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Server-side service-account JSON | Alternative only; store as a secret, never as a Vercel frontend variable |
 | `ADMIN_EMAILS` | Comma-separated verified admin-email allowlist for additional admins | Optional; the retained legacy admin is always included and cannot be removed by this variable |
-| `ORDER_CURRENCY` | Server order currency | Optional; defaults to `USD`; match frontend display currency |
-| `ORDER_TAX_RATE` | Server tax fraction, from 0 through 1 | Optional; defaults to `0.05` |
-| `BANK_TRANSFER_INSTRUCTIONS` | Enables manual transfer checkout and displays instructions | Optional; only set with real operator instructions |
+| `PKR_ORDER_TAX_RATE` | Server PKR tax fraction, from 0 through 1 | Optional; preserves the previous 0.05 default, not a compliance determination |
+| `USD_ORDER_TAX_RATE` | Server USD tax fraction, from 0 through 1 | Required to enable USD checkout; business tax review required |
+| `LEGACY_PRODUCT_PRICE_CURRENCY` | Declares the unit of legacy product `price` fields | Optional; only set after inspecting existing product records |
+| `COD_ALLOWED_COUNTRIES` | Comma-separated ISO country codes eligible for COD | Optional; defaults to `PK` |
+| `DOMESTIC_BANK_TRANSFER_INSTRUCTIONS` | Legacy PKR bank-transfer checkout instructions | Optional; new seller-specific manual payments use seller accounts |
+| `INTERNATIONAL_BANK_TRANSFER_INSTRUCTIONS` | Legacy USD bank-transfer checkout instructions | Optional; new seller-specific manual payments use seller accounts |
 | `GEMINI_API_KEY` | Enables the server-side chat proxy | Optional; server only |
 | `TRUST_PROXY` | Trust exactly one upstream proxy when deriving client IP | Optional; leave unset unless topology is verified |
 | `CORS_ORIGINS` | Comma-separated exact frontend origins permitted for browser API requests | Required for split-origin frontend/API deployments; omit when same-origin |
 | `DISABLE_HMR` | Vite dev-server HMR control | Development-only; not needed by production API |
 
-Frontend-public build configuration: `VITE_API_BASE_URL` is the HTTPS origin of the separately deployed Express API; leave it unset for same-origin hosting. `VITE_ORDER_CURRENCY` controls display formatting and must match the server; `VITE_SUPPORT_EMAIL` is an optional public contact address. `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_MEASUREMENT_ID`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, and `VITE_FIRESTORE_DATABASE_ID` optionally override the checked-in public Firebase web configuration for staging builds. All `VITE_*` values are public and become part of the frontend; never put Admin credentials, Gemini keys, or payment credentials in them. `VITE_ORDER_TAX_RATE` is not used; tax is returned by the server checkout configuration.
+Frontend-public build configuration: `VITE_API_BASE_URL` is the HTTPS origin of the separately deployed Express API; leave it unset for same-origin hosting. `VITE_SUPPORT_EMAIL` is an optional public contact address. `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_MEASUREMENT_ID`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, and `VITE_FIRESTORE_DATABASE_ID` optionally override the checked-in public Firebase web configuration for staging builds. All `VITE_*` values are public and become part of the frontend; never put Admin credentials, Gemini keys, or payment credentials in them. Checkout configuration is served by Express; tax settings and transfer instructions are server-only.
 
 ---
 
@@ -302,18 +316,21 @@ npm run lint     # TypeScript type checking
 
 ## 🧪 Manual smoke tests
 
-Run `npm run lint` and `npm run build` first, then use two browser accounts (buyer and seller) plus the configured administrator. A seller account should also visit `/dashboard` and use buyer functions to verify the roles do not exclude one another:
+Run `npm test`, `npm run lint`, and `npm run build` first, then use two browser accounts (buyer and seller) plus the configured administrator against a staging Firebase project. A seller account should also visit `/dashboard` and use buyer functions to verify the roles do not exclude one another:
 
 1. Create a buyer account with email/password, confirm the verification email, sign in, edit the profile, add an address, and request a password reset.
 2. As a buyer, submit a seller application. Confirm the dashboard remains unavailable and application status is pending.
 3. As the administrator, open Admin Console, reject the application with a reason, confirm that status/reason appear to the buyer, then approve a new/re-submitted application.
 4. As the approved seller, save store details, create and edit a listing, adjust inventory, hide/publish it, and delete an owned listing. Confirm buyers cannot see hidden listings.
-5. As a verified buyer, add a currently published item to cart and place a COD order. Confirm the server-created order amount and remaining stock; try submitting a forged price or marking the order paid directly in Firestore and confirm the rules reject it.
-6. As the seller, process and ship the order, then confirm the buyer sees fulfillment updates in order history/details.
-7. Place a manual bank-transfer order with a reference. Confirm it remains pending review until admin approves/rejects it; an unverified buyer cannot submit an order.
-8. Suspend the buyer from Admin Console and confirm new checkout/API operations are denied; reactivate to restore access.
-9. Call `/api/payments/jazzcash/initiate` or `/api/payments/easypaisa/initiate` for an order and confirm the API responds unavailable until an official provider integration is configured. No payment should show as paid from a client-side request.
-10. Visit `/about`, `/blog`, `/contact`, `/faq`, `/privacy`, and `/terms`; configure and verify the support email and obtain legal review of the draft policies before public launch.
+5. Create a listing with a PKR price, a distinct USD price, and another listing with only one market price. Confirm no exchange rate is applied, and that the missing market price is shown as unavailable and prevents checkout.
+6. As a verified buyer with a Pakistan (`PK`) shipping destination, place a PKR COD order. Confirm the order snapshot, configured tax, and stock reservation; submit forged currency, price, tax, total, and payment-status fields and confirm the server ignores them.
+7. As the approved seller, add and enable payment accounts, then create a multi-seller manual-payment order. Confirm each seller receives one separate account selection/reference, server-calculated subtotal/tax/amounts reconcile to the total, and every payment begins `pending_review`.
+8. Verify a seller can approve/reject only their own pending payment after independently confirming receipt. Confirm one seller's approval does not mark the full order paid, the admin endpoint cannot bypass seller review for new-format orders, and fulfillment remains blocked for an unpaid seller portion. Verify COD and legacy admin `bank_transfer`/cash-received reviews still work.
+9. Verify an unconfigured USD tax rate blocks international checkout. Verify legacy `price` documents cannot be ordered until the operator has checked their units and explicitly sets `LEGACY_PRODUCT_PRICE_CURRENCY`.
+10. As the seller, process and ship an eligible order, then confirm the buyer sees fulfillment updates and historical order currency/totals remain unchanged.
+11. Suspend the buyer from Admin Console and confirm new checkout/API operations are denied; reactivate to restore access. Verify the idempotency key, stock validation, and payment state-transition checks still work.
+12. Call `/api/payments/jazzcash/initiate` or `/api/payments/easypaisa/initiate` for an order and confirm the API responds unavailable until an official provider integration is configured. No payment should show as paid from a client-side request.
+13. Visit `/about`, `/blog`, `/contact`, `/faq`, `/privacy`, and `/terms`; configure and verify the support email and obtain legal review of the draft policies before public launch.
 
 For rules validation, use the Firebase Emulator Suite or a non-production Firebase project before deploying to the existing production database. The smoke-test deployment assumes that the target project and the named Firestore database in `firebase.json` are the intended ones; verify both before running any deployment command.
 

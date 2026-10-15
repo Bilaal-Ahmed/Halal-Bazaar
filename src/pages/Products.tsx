@@ -13,6 +13,8 @@ import { motion } from 'motion/react';
 import { db } from '../firebase';
 import { Product, CATEGORIES } from '../types';
 import { ProductCard } from '../components/ProductCard';
+import { useCheckoutConfig } from '../contexts/CheckoutConfigContext';
+import { getProductPrice } from '../lib/currency';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Input } from '../../components/ui/input';
 import {
@@ -70,6 +72,7 @@ export default function Products() {
   ]);
   const [sort, setSort] = useState<SortOption>('newest');
   const [showFilters, setShowFilters] = useState(false);
+  const { config } = useCheckoutConfig();
 
   useEffect(() => {
     const selectedCategory = searchParams.get('category');
@@ -107,7 +110,9 @@ export default function Products() {
                 : '',
             category:
               typeof data.category === 'string' ? data.category : '',
-            price: Number(data.price) || 0,
+            price: Number(data.price) || undefined,
+            pricePKR: Number(data.pricePKR) || undefined,
+            priceUSD: Number(data.priceUSD) || undefined,
             rating: Number(data.rating) || 0,
             numReviews: Number(data.numReviews) || 0,
             createdAt: data.createdAt,
@@ -119,7 +124,7 @@ export default function Products() {
           fetchedProducts.map((product) => ({
             id: product.id,
             name: product.name,
-            price: product.price,
+            pricePKR: product.pricePKR,
             category: product.category,
           }))
         );
@@ -163,17 +168,27 @@ export default function Products() {
       const matchesCategory =
         category === 'all' || product.category === category;
 
-      const matchesPrice =
-        product.price >= priceRange[0] &&
-        product.price <= priceRange[1];
+      const pricePKR = getProductPrice(product, 'PKR', config?.legacyPriceCurrency);
+      const matchesPrice = pricePKR == null
+        ? priceRange[0] === 0
+        : pricePKR >= priceRange[0] &&
+          pricePKR <= priceRange[1];
 
       return matchesSearch && matchesCategory && matchesPrice;
     });
 
     if (sort === 'price-asc') {
-      filtered = [...filtered].sort((a, b) => a.price - b.price);
+      filtered = [...filtered].sort(
+        (a, b) =>
+          (getProductPrice(a, 'PKR', config?.legacyPriceCurrency) ?? Number.POSITIVE_INFINITY) -
+          (getProductPrice(b, 'PKR', config?.legacyPriceCurrency) ?? Number.POSITIVE_INFINITY)
+      );
     } else if (sort === 'price-desc') {
-      filtered = [...filtered].sort((a, b) => b.price - a.price);
+      filtered = [...filtered].sort(
+        (a, b) =>
+          (getProductPrice(b, 'PKR', config?.legacyPriceCurrency) ?? Number.NEGATIVE_INFINITY) -
+          (getProductPrice(a, 'PKR', config?.legacyPriceCurrency) ?? Number.NEGATIVE_INFINITY)
+      );
     } else {
       filtered = [...filtered].sort(
         (a, b) =>
@@ -182,7 +197,7 @@ export default function Products() {
     }
 
     return filtered;
-  }, [products, searchQuery, category, priceRange, sort]);
+  }, [products, searchQuery, category, priceRange, sort, config?.legacyPriceCurrency]);
 
   const resetFilters = () => {
     setSearchQuery('');

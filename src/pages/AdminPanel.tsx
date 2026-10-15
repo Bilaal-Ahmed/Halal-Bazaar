@@ -5,6 +5,8 @@ import { Input } from '../../components/ui/input';
 import { apiRequest } from '../lib/api';
 import { toast } from 'sonner';
 import { RefreshCw, ShieldCheck, Store, Users, Package, ClipboardList, CreditCard } from 'lucide-react';
+import { useCheckoutConfig } from '../contexts/CheckoutConfigContext';
+import { formatCurrency, formatProductPrices } from '../lib/currency';
 
 type AdminRecord = Record<string, any> & { id: string };
 interface AdminData {
@@ -20,6 +22,7 @@ type AdminTab = 'applications' | 'users' | 'products' | 'orders' | 'payments';
 const emptyData: AdminData = { users: [], applications: [], products: [], orders: [], paymentReviews: [] };
 
 export default function AdminPanel() {
+  const { config } = useCheckoutConfig();
   const [data, setData] = useState<AdminData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -223,7 +226,14 @@ export default function AdminPanel() {
               <tbody>{filteredProducts.map(product => <tr key={product.id} className="border-b">
                 <td className="p-2 font-semibold">{product.name}<div className="text-xs text-muted-foreground">{product.category}</div></td>
                 <td className="p-2">{product.sellerName || product.sellerId}</td>
-                <td className="p-2">{product.currency || ''} {product.price} · {product.stock} in stock</td>
+                <td className="p-2">
+                  {formatProductPrices({
+                    price: product.price,
+                    pricePKR: product.pricePKR,
+                    priceUSD: product.priceUSD,
+                  }, config?.legacyPriceCurrency).join(' · ') || 'Legacy price needs currency confirmation'}
+                  {' · '}{product.stock} in stock
+                </td>
                 <td className="p-2">{product.published ? 'Published' : 'Hidden'}</td>
                 <td className="p-2"><Button size="sm" variant="outline" disabled={busyId === product.id} onClick={() => void setProductPublished(product.id, !product.published)}>{product.published ? 'Unpublish' : 'Publish'}</Button></td>
               </tr>)}</tbody>
@@ -236,10 +246,21 @@ export default function AdminPanel() {
                   <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
                     <div>
                       <p className="font-bold">Order {order.id}</p>
-                      <p className="text-sm text-muted-foreground">{order.buyerEmail} · {order.currency} {Number(order.totalAmount || 0).toFixed(2)}</p>
+                      <p className="text-sm text-muted-foreground">{order.buyerEmail} · {order.currency ? formatCurrency(Number(order.totalAmount || 0), order.currency) : 'Currency unavailable'}</p>
                       <p className="text-sm capitalize">Fulfillment: {order.status} · Payment: {String(order.paymentMethod).replaceAll('_', ' ')} / {String(order.paymentStatus).replaceAll('_', ' ')}</p>
                       {order.transferReference && <p className="text-xs text-muted-foreground">Transfer reference: {order.transferReference}</p>}
-                      <p className="text-xs text-muted-foreground">{(order.items || []).map((line: any) => `${line.product?.name || line.name} × ${line.quantity}`).join(', ')}</p>
+                      <p className="text-xs text-muted-foreground">{(order.items || []).map((line: any) => {
+                        const lineTotal = Number(line.lineTotal ?? Number(line.product?.price || 0) * Number(line.quantity || 0));
+                        const amount = order.currency
+                          ? formatCurrency(lineTotal, order.currency)
+                          : 'Amount unavailable';
+                        return `${line.product?.name || line.name} × ${line.quantity} · ${amount}`;
+                      }).join(', ')}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Subtotal {order.currency ? formatCurrency(Number(order.subtotal || 0), order.currency) : 'unavailable'}
+                        {' · '}Tax {order.currency ? formatCurrency(Number(order.taxAmount || 0), order.currency) : 'unavailable'}
+                        {order.taxRate != null && ` (${(Number(order.taxRate) * 100).toFixed(2)}%)`}
+                      </p>
                     </div>
                     {tab === 'payments' && <div className="flex flex-wrap gap-2">
                       {order.paymentMethod === 'bank_transfer' && order.paymentStatus === 'pending_review' && <>
