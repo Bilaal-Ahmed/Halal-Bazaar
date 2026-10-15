@@ -893,7 +893,12 @@ async function startServer() {
           subtotal: order.sellerPayments?.[req.identity!.uid]?.subtotal ?? subtotal,
           shippingAddress: order.shippingAddress,
           sellerPayment: order.sellerPayments?.[req.identity!.uid] || null,
-          fulfillmentStatus: order.fulfillmentBySeller?.[req.identity!.uid]?.status || "pending",
+          fulfillmentStatus:
+            order.fulfillmentBySeller?.[req.identity!.uid]?.status || "pending",
+          courierName:
+            order.fulfillmentBySeller?.[req.identity!.uid]?.courierName || "",
+          trackingNumber:
+            order.fulfillmentBySeller?.[req.identity!.uid]?.trackingNumber || "",
         };
       }),
     });
@@ -978,193 +983,128 @@ async function startServer() {
     res.json({ ok: true, decision, paymentStatus: resultingStatus });
   }));
 
-  app.patch("/api/seller/orders/:orderId/fulfillment", authenticate, requireActiveAccount, requireVerifiedEmail, requireSeller, asyncRoute(async (req, res) => {
+
+app.patch(
+  "/api/seller/orders/:orderId/fulfillment",
+  authenticate,
+  requireActiveAccount,
+  requireVerifiedEmail,
+  requireSeller,
+  asyncRoute(async (req, res) => {
     const status = req.body?.status;
+
     if (!["processing", "shipped", "delivered"].includes(status)) {
-      throw apiError(400, "invalid_fulfillment_status", "Use processing, shipped, or delivered.");
+      throw apiError(
+        400,
+        "invalid_fulfillment_status",
+        "Use processing, shipped, or delivered.",
+      );
     }
+
+    const courierName = req.body?.courierName;
+    const trackingNumber = req.body?.trackingNumber;
+
+    if (
+      status === "shipped" &&
+      (!validText(courierName, 80) ||
+        !validText(trackingNumber, 100) ||
+        !/^[A-Za-z0-9 ._/-]+$/.test(trackingNumber.trim()))
+    ) {
+      throw apiError(
+        400,
+        "tracking_details_required",
+        "Enter a courier name and a valid tracking number before shipping.",
+      );
+    }
+
     const db = getAdminDb();
-    const orderRef = db.doc(`orders/${req.params.orderId}`);
+    const sellerId = req.identity!.uid;
+    const orderRef = db.doc(`orders / ${ req.params.orderId } `);
+
     await db.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(orderRef);
-      const order = snapshot.data();
-      if (!snapshot.exists || !Array.isArray(order?.sellerIds) || !order.sellerIds.includes(req.identity!.uid)) {
-        throw apiError(404, "seller_order_not_found", "This order is not assigned to your store.");
+
+      if (!snapshot.exists) {
+        throw apiError(404, "seller_order_not_found", "Order not found.");
       }
+
+      const order = snapshot.data()!;
+
+      if (
+        !Array.isArray(order.sellerIds) ||
+        !order.sellerIds.includes(sellerId)
+      ) {
+        throw apiError(
+          404,
+          "seller_order_not_found",
+          "This order is not assigned to your store.",
+        );
+      }
+
+      // Preserve existing payment verification safeguards.
       if (order.paymentMethod === "manual_payment") {
-        if (order.sellerPayments?.[req.identity!.uid]?.status !== "paid") {
-          throw apiError(409, "payment_review_required", "Your seller payment must be verified before fulfillment begins.");
+        if (order.sellerPayments?.[sellerId]?.status !== "paid") {
+          throw apiError(
+            409,
+            "payment_review_required",
+            "Your seller payment must be verified before fulfillment begins.",
+          );
         }
-      } else if (order.paymentMethod === "bank_transfer" && order.paymentStatus !== "paid") {
-        throw apiError(409, "payment_review_required", "Bank-transfer orders must be verified before fulfillment begins.");
+      } else if (
+        order.paymentMethod === "bank_transfer" &&
+        order.paymentStatus !== "paid"
+      ) {
+        throw apiError(
+          409,
+          "payment_review_required",
+          "Bank-transfer orders must be verified before fulfillment begins.",
+        );
       }
-      const currentStatus = order.fulfillmentBySeller?.[req.identity!.uid]?.status || "pending";
+
+      const allFulfillment = order.fulfillmentBySeller || {};
+      const current = allFulfillment[sellerId] || {};
+      const currentStatus = current.status || "pending";
+
       const allowed: Record<string, string[]> = {
         pending: ["processing"],
         processing: ["shipped"],
         shipped: ["delivered"],
         delivered: [],
       };
+
       if (!allowed[currentStatus]?.includes(status)) {
-        throw apiError(409, "invalid_status_transition", `Cannot move fulfillment from ${currentStatus} to ${status}.`);
+        throw apiError(
+          409,
+          "invalid_status_transition",
+          `Cannot move fulfillment from ${ currentStatus } to ${ status }.`,
+        );
       }
+
+      const updatedFulfillment = {
+        ...current,
+        status,
+        updatedAt: FieldValue.serverTimestamp(),
+        ...(status === "shipped"
+          ? {
+              courierName: courierName.trim(),
+              trackingNumber: trackingNumber.trim(),
+            }
+          : {}),
+      };
+
       transaction.update(orderRef, {
         fulfillmentBySeller: {
-          ...(order.fulfillmentBySeller || {}),
-          [req.identity!.uid]: {
-            status,
-            updatedAt: FieldValue.serverTimestamp(),
-          },
+          ...allFulfillment,
+          [sellerId]: updatedFulfillment,
         },
         updatedAt: FieldValue.serverTimestamp(),
       });
     });
+
     res.json({ ok: true, status });
-  }));
+  }),
+);
 
-  app.get("/api/admin/data", authenticate, requireAdmin, asyncRoute(async (_req, res) => {
-    const db = getAdminDb();
-    const [users, applications, products, orders, reviews] = await Promise.all([
-      db.collection("users").limit(500).get(),
-      db.collection("sellerApplications").limit(200).get(),
-      db.collection("products").limit(500).get(),
-      db.collection("orders").limit(500).get(),
-      db.collection("paymentReviews").limit(200).get(),
-    ]);
-    res.json({
-      users: users.docs.map((item) => ({ id: item.id, ...item.data() })),
-      applications: applications.docs.map((item) => ({ id: item.id, ...item.data() })),
-      products: products.docs.map((item) => ({ id: item.id, ...item.data() })),
-      orders: orders.docs.map((item) => ({ id: item.id, ...item.data() })),
-      paymentReviews: reviews.docs.map((item) => ({ id: item.id, ...item.data() })),
-    });
-  }));
-
-  app.post("/api/admin/seller-applications/:uid/decision", authenticate, requireAdmin, asyncRoute(async (req, res) => {
-    const decision = req.body?.decision;
-    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
-    if (!["approved", "rejected"].includes(decision) || (decision === "rejected" && !validText(reason, 1000))) {
-      throw apiError(400, "invalid_application_decision", "Choose approve, or reject with a reason.");
-    }
-    const db = getAdminDb();
-    const uid = req.params.uid;
-    if (uid === req.identity!.uid) {
-      throw apiError(403, "self_application_review", "Administrators cannot review their own seller application.");
-    }
-    const applicationRef = db.doc(`sellerApplications/${uid}`);
-    const userRef = db.doc(`users/${uid}`);
-    const audit = auditRef(db);
-    await db.runTransaction(async (transaction) => {
-      const [applicationSnapshot, userSnapshot] = await Promise.all([
-        transaction.get(applicationRef),
-        transaction.get(userRef),
-      ]);
-      if (!applicationSnapshot.exists || !userSnapshot.exists) throw apiError(404, "application_not_found", "Seller application not found.");
-      if (applicationSnapshot.data()?.status !== "pending") throw apiError(409, "application_not_pending", "This application has already been reviewed.");
-      transaction.update(applicationRef, {
-        status: decision,
-        reason: decision === "rejected" ? reason : "",
-        reviewedBy: req.identity!.uid,
-        reviewedAt: FieldValue.serverTimestamp(),
-      });
-      transaction.update(userRef, {
-        ...(decision === "approved" ? { role: "seller", status: "approved" } : {}),
-        sellerApplication: {
-          status: decision,
-          submittedAt: applicationSnapshot.data()?.submittedAt || null,
-          reason: decision === "rejected" ? reason : "",
-        },
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-      writeAudit(transaction, audit, req.identity, `seller_application_${decision}`, uid, { reason });
-    });
-    res.json({ ok: true, decision });
-  }));
-
-  app.post("/api/admin/users/:uid/status", authenticate, requireAdmin, asyncRoute(async (req, res) => {
-    const status = req.body?.status;
-    if (!["approved", "suspended", "restricted"].includes(status)) {
-      throw apiError(400, "invalid_account_status", "Choose approved, suspended, or restricted.");
-    }
-    const db = getAdminDb();
-    const userRef = db.doc(`users/${req.params.uid}`);
-    const audit = auditRef(db);
-    await db.runTransaction(async (transaction) => {
-      const target = await transaction.get(userRef);
-      if (!target.exists) throw apiError(404, "user_not_found", "User not found.");
-      if (target.id === req.identity!.uid && status !== "approved") {
-        throw apiError(400, "self_suspension", "Administrators cannot suspend their own account.");
-      }
-      if (ADMIN_EMAILS.has((target.data()?.email || "").toLowerCase())) {
-        throw apiError(400, "admin_status_protected", "Configured administrator accounts cannot be modified through account moderation.");
-      }
-      transaction.update(userRef, { status, updatedAt: FieldValue.serverTimestamp() });
-      writeAudit(transaction, audit, req.identity, "user_status_changed", target.id, { status });
-    });
-    res.json({ ok: true, status });
-  }));
-
-  app.patch("/api/admin/products/:productId", authenticate, requireAdmin, asyncRoute(async (req, res) => {
-    if (typeof req.body?.published !== "boolean") {
-      throw apiError(400, "invalid_product_action", "A boolean published value is required.");
-    }
-    const db = getAdminDb();
-    const productRef = db.doc(`products/${req.params.productId}`);
-    const audit = auditRef(db);
-    await db.runTransaction(async (transaction) => {
-      const product = await transaction.get(productRef);
-      if (!product.exists) throw apiError(404, "product_not_found", "Product not found.");
-      transaction.update(productRef, { published: req.body.published, updatedAt: FieldValue.serverTimestamp() });
-      writeAudit(transaction, audit, req.identity, "product_publication_changed", product.id, { published: req.body.published });
-    });
-    res.json({ ok: true });
-  }));
-
-  app.post("/api/admin/orders/:orderId/payment-review", authenticate, requireAdmin, asyncRoute(async (req, res) => {
-    const decision = req.body?.decision;
-    if (!["approve_transfer", "reject_transfer", "cash_received"].includes(decision)) {
-      throw apiError(400, "invalid_payment_decision", "Choose approve_transfer, reject_transfer, or cash_received.");
-    }
-    const db = getAdminDb();
-    const orderRef = db.doc(`orders/${req.params.orderId}`);
-    const reviewRef = db.collection("paymentReviews").doc();
-    const audit = auditRef(db);
-    await db.runTransaction(async (transaction) => {
-      const orderSnapshot = await transaction.get(orderRef);
-      if (!orderSnapshot.exists) throw apiError(404, "order_not_found", "Order not found.");
-      const order = orderSnapshot.data()!;
-      if (order.buyerId === req.identity!.uid) {
-        throw apiError(403, "self_payment_review", "Administrators cannot review payment for their own order.");
-      }
-      if (order.paymentMethod === "manual_payment" || order.sellerPayments) {
-        throw apiError(409, "seller_payment_review_required", "Manual seller payments must be reviewed by their assigned sellers.");
-      }
-      const expectedMethod = decision === "cash_received" ? "cash_on_delivery" : "bank_transfer";
-      const expectedPaymentStatus = decision === "cash_received" ? "unpaid" : "pending_review";
-      if (order.paymentMethod !== expectedMethod || order.paymentStatus !== expectedPaymentStatus
-        || order.status === "cancelled") {
-        throw apiError(409, "payment_transition_invalid", "This payment cannot be reviewed in its current state.");
-      }
-      const paymentStatus = decision === "reject_transfer" ? "rejected" : "paid";
-      transaction.update(orderRef, {
-        paymentStatus,
-        paymentReviewedAt: FieldValue.serverTimestamp(),
-        paymentReviewedBy: req.identity!.uid,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-      transaction.create(reviewRef, {
-        orderId: orderRef.id,
-        buyerId: order.buyerId,
-        paymentMethod: order.paymentMethod,
-        decision,
-        actorUid: req.identity!.uid,
-        transferReference: order.transferReference || "",
-        createdAt: FieldValue.serverTimestamp(),
-      });
-      writeAudit(transaction, audit, req.identity, "order_payment_reviewed", orderRef.id, { decision });
-    });
-    res.json({ ok: true, decision });
-  }));
 
   app.post("/api/payments/:provider/initiate", authenticate, requireActiveAccount, asyncRoute(async (req, _res) => {
     const provider = req.params.provider;

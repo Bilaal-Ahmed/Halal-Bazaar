@@ -137,13 +137,101 @@ export default function OrdersPage() {
                 {order.paymentMethod !== 'manual_payment' && order.transferReference && <p className="mt-1 text-muted-foreground">Transfer reference: {order.transferReference}</p>}
               </div>
             </div>
-            <div className="rounded-xl border p-3 text-sm">
-              <h3 className="font-semibold">Seller fulfillment tracking</h3>
+            <div className="rounded-xl border p-4 text-sm">
+              <h3 className="font-semibold flex items-center gap-2">
+                <Truck className="w-4 h-4" />
+                Shipment Tracking
+              </h3>
+
               {Object.entries(order.fulfillmentBySeller || {}).length === 0 ? (
-                <p className="mt-1 text-muted-foreground">Your order is awaiting seller processing.</p>
-              ) : Object.entries(order.fulfillmentBySeller || {}).map(([sellerId, fulfillment]) => (
-                <p key={sellerId} className="mt-1 text-muted-foreground">Seller {sellerId}: <span className="capitalize">{fulfillment.status}</span></p>
-              ))}
+                <p className="mt-3 text-muted-foreground">
+                  Your order is awaiting seller processing.
+                </p>
+              ) : (
+                <div className="mt-4 space-y-5">
+                  {Object.entries(order.fulfillmentBySeller || {}).map(
+                    ([sellerId, fulfillment]) => {
+                      const stages = [
+                        { key: "processing", label: "Processing" },
+                        { key: "shipped", label: "Shipped" },
+                        { key: "delivered", label: "Delivered" },
+                      ];
+
+                      const stageOrder: Record<string, number> = {
+                        pending: -1,
+                        processing: 0,
+                        shipped: 1,
+                        delivered: 2,
+                      };
+
+                      const currentStage = stageOrder[fulfillment.status] ?? -1;
+
+                      return (
+                        <div key={sellerId} className="rounded-lg bg-slate-50 p-4">
+                          <p className="font-semibold">Seller shipment</p>
+
+                          <div className="mt-4 space-y-4">
+                            {stages.map((stage, index) => {
+                              const complete = index <= currentStage;
+                              const current = index === currentStage;
+
+                              return (
+                                <div key={stage.key} className="flex gap-3">
+                                  <div className="flex flex-col items-center">
+                                    <div
+                                      className={`h-4 w-4 rounded-full border-2 ${complete
+                                          ? "border-green-600 bg-green-600"
+                                          : "border-slate-300 bg-white"
+                                        }`}
+                                    />
+                                    {index < stages.length - 1 && (
+                                      <div
+                                        className={`mt-1 min-h-6 w-0.5 ${index < currentStage
+                                            ? "bg-green-600"
+                                            : "bg-slate-300"
+                                          }`}
+                                      />
+                                    )}
+                                  </div>
+
+                                  <div className="-mt-1">
+                                    <p className="font-medium">{stage.label}</p>
+                                    {current && (
+                                      <p className="text-xs text-muted-foreground">
+                                        Current stage
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {(fulfillment.status === "shipped" ||
+                            fulfillment.status === "delivered") && (
+                              <div className="mt-4 space-y-2 border-t pt-3">
+                                <p>
+                                  <span className="font-medium">Courier:</span>{" "}
+                                  {fulfillment.courierName || "Not provided"}
+                                </p>
+                                <p>
+                                  <span className="font-medium">Tracking number:</span>{" "}
+                                  {fulfillment.trackingNumber || "Not provided"}
+                                </p>
+                              </div>
+                            )}
+
+                          {fulfillment.status === "delivered" && (
+                            <p className="mt-3 font-medium text-green-700">
+                              Shipment delivered.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    }
+                  )}
+                </div>
+              )}
             </div>
           </>
         )}

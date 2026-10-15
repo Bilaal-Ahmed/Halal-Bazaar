@@ -104,7 +104,15 @@ export interface Order {
   paymentStatus: 'unpaid' | 'pending_review' | 'paid' | 'rejected';
   transferReference?: string;
   sellerPayments?: Record<string, OrderSellerPayment>;
-  fulfillmentBySeller?: Record<string, { status: string; updatedAt?: any }>;
+  fulfillmentBySeller?: Record<
+    string,
+    {
+      status: string;
+      updatedAt?: any;
+      courierName?: string;
+      trackingNumber?: string;
+    }
+  >;
   shippingAddress?: {
     name: string;
     address: string;

@@ -499,14 +499,53 @@ export default function SellerDashboard() {
     status: string
   ) => {
     try {
-      await apiRequest(`/api/seller/orders/${encodeURIComponent(orderId)}/fulfillment`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status }),
-      });
-      toast.success('Order fulfillment updated.');
+      let courierName = "";
+      let trackingNumber = "";
+
+      if (status === "shipped") {
+        const courierInput = window.prompt(
+          "Enter courier name (e.g., TCS, Leopards, Pakistan Post):"
+        );
+
+        if (courierInput === null || !courierInput.trim()) {
+          toast.error("Courier name is required.");
+          return;
+        }
+
+        const trackingInput = window.prompt(
+          "Enter the shipment tracking number:"
+        );
+
+        if (trackingInput === null || !trackingInput.trim()) {
+          toast.error("Tracking number is required.");
+          return;
+        }
+
+        courierName = courierInput.trim();
+        trackingNumber = trackingInput.trim();
+      }
+
+      await apiRequest(
+        `/api/seller/orders/${encodeURIComponent(orderId)}/fulfillment`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            status,
+            ...(status === "shipped"
+              ? { courierName, trackingNumber }
+              : {}),
+          }),
+        }
+      );
+
+      toast.success("Order fulfillment updated.");
       await loadSellerOrders();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update fulfillment.');
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not update fulfillment."
+      );
     }
   };
 
@@ -592,7 +631,7 @@ if (!isApprovedSeller) {
 const grossOrderValues = sellerOrders.reduce(
   (totals, order) => {
     if (order.currency !== 'PKR' && order.currency !== 'USD') return totals;
-    const currency = order.currency;
+    const currency: 'PKR' | 'USD' = order.currency;
     const amount = (order.items || []).reduce(
       (lineSum: number, line: any) =>
         line.product?.sellerId === user?.uid
@@ -1244,7 +1283,7 @@ return (
         </Button>
       </CardHeader>
 
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-5">
         {ordersLoading && (
           <p className="py-6 text-center text-muted-foreground">
             Loading orders...
@@ -1261,17 +1300,30 @@ return (
           const fulfillment = order.fulfillmentStatus || 'pending';
           const sellerPayment = order.sellerPayment;
           const sellerPaymentStatus = sellerPayment?.status;
-          const canFulfill = order.paymentMethod === 'manual_payment'
-            ? sellerPaymentStatus === 'paid'
-            : order.paymentMethod === 'bank_transfer'
-              ? order.paymentStatus === 'paid'
-              : true;
+
+          const canFulfill =
+            order.paymentMethod === 'manual_payment'
+              ? sellerPaymentStatus === 'paid'
+              : order.paymentMethod === 'bank_transfer'
+                ? order.paymentStatus === 'paid'
+                : true;
 
           const nextStatus: Record<string, string> = {
             pending: 'processing',
             processing: 'shipped',
             shipped: 'delivered',
           };
+
+          const fulfillmentSteps = [
+            { id: 'pending', label: 'Order received', description: 'The order is waiting for processing.' },
+            { id: 'processing', label: 'Processing & packing', description: 'Prepare and pack the products.' },
+            { id: 'shipped', label: 'Order shipped', description: 'Hand the package to the courier.' },
+            { id: 'delivered', label: 'Delivered', description: 'The buyer receives the order.' },
+          ];
+
+          const stepIndex = fulfillmentSteps.findIndex(
+            (step) => step.id === fulfillment
+          );
 
           const lines = (order.items || []).filter(
             (line: any) => line.product?.sellerId === user?.uid
@@ -1280,53 +1332,176 @@ return (
           return (
             <div
               key={order.id}
-              className="flex flex-col gap-3 rounded-xl border p-4 md:flex-row md:items-center md:justify-between"
+              className="space-y-5 rounded-xl border p-4 sm:p-5"
             >
-              <div>
-                <p className="font-bold">Order {order.id}</p>
+              {/* Order heading */}
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="break-all font-bold">Order {order.id}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {lines
+                      .map(
+                        (line: any) =>
+                          `${line.product?.name || 'Product'} × ${line.quantity}`
+                      )
+                      .join(', ')}
+                  </p>
+                </div>
 
-                <p className="text-sm text-muted-foreground">
-                  {lines
-                    .map(
-                      (line: any) =>
-                        `${line.product?.name || 'Product'} × ${line.quantity}`
-                    )
-                    .join(', ')}
+                <Badge variant={fulfillment === 'delivered' ? 'default' : 'secondary'}>
+                  {fulfillment.replace('_', ' ')}
+                </Badge>
+              </div>
+
+              {/* Fulfillment timeline */}
+              <div className="rounded-xl bg-slate-50 p-4">
+                <h4 className="mb-4 text-sm font-semibold">
+                  Product processing & shipping
+                </h4>
+
+                <div className="space-y-0">
+                  {fulfillmentSteps.map((step, index) => {
+                    const completed =
+                      stepIndex >= 0 && index <= stepIndex;
+                    const current = index === stepIndex;
+
+                    return (
+                      <div key={step.id} className="relative flex gap-3">
+                        <div className="flex w-6 shrink-0 flex-col items-center">
+                          <div
+                            className={`z-10 flex h-6 w-6 items-center justify-center rounded-full border-2 text-xs font-bold ${completed
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'border-slate-300 bg-white text-slate-400'
+                              }`}
+                          >
+                            {completed ? '✓' : index + 1}
+                          </div>
+
+                          {index < fulfillmentSteps.length - 1 && (
+                            <div
+                              className={`min-h-10 w-0.5 flex-1 ${index < stepIndex
+                                  ? 'bg-primary'
+                                  : 'bg-slate-200'
+                                }`}
+                            />
+                          )}
+                        </div>
+
+                        <div className="pb-5">
+                          <p className="text-sm font-semibold">
+                            {step.label}
+                            {current && (
+                              <span className="ml-2 text-xs font-medium text-primary">
+                                Current
+                              </span>
+                            )}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {step.description}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Separate payment status */}
+              <div className="space-y-2 rounded-xl border p-4">
+                <h4 className="text-sm font-semibold">Payment status</h4>
+
+                <p className="text-sm">
+                  Method:{' '}
+                  <span className="font-medium">
+                    {(order.paymentMethod || 'unknown').replaceAll('_', ' ')}
+                  </span>
                 </p>
 
-                <p className="text-sm capitalize">
-                  Your fulfillment: {fulfillment} · Payment:{' '}
-                  {sellerPaymentStatus || order.paymentStatus || 'unknown'}
+                <p className="text-sm">
+                  Seller payment:{' '}
+                  <Badge
+                    variant={
+                      sellerPaymentStatus === 'paid' ||
+                        order.paymentStatus === 'paid'
+                        ? 'default'
+                        : 'secondary'
+                    }
+                  >
+                    {(sellerPaymentStatus || order.paymentStatus || 'unknown')
+                      .replaceAll('_', ' ')}
+                  </Badge>
                 </p>
+
                 {sellerPayment && (
-                  <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-3 text-sm">
-                    <p>Seller subtotal: {formatCurrency(Number(sellerPayment.subtotal), order.currency)}</p>
-                    <p>Allocated tax: {formatCurrency(Number(sellerPayment.taxAmount), order.currency)}</p>
-                    <p className="font-semibold">Amount due: {formatCurrency(Number(sellerPayment.amount), order.currency)}</p>
-                    <p>{sellerPaymentMethodLabels[sellerPayment.paymentAccount.method]} · {sellerPayment.paymentAccount.accountTitle}</p>
-                    <p>Account/mobile: {sellerPayment.paymentAccount.accountNumber}</p>
-                    {sellerPayment.paymentAccount.iban && <p>IBAN: {sellerPayment.paymentAccount.iban}</p>}
-                    {sellerPayment.paymentAccount.instructions && <p>{sellerPayment.paymentAccount.instructions}</p>}
-                    <p>Buyer transfer reference: {sellerPayment.transferReference}</p>
+                  <div className="space-y-1 rounded-lg bg-slate-50 p-3 text-sm">
+                    <p>
+                      Seller subtotal:{' '}
+                      {formatCurrency(Number(sellerPayment.subtotal), order.currency)}
+                    </p>
+                    <p>
+                      Allocated tax:{' '}
+                      {formatCurrency(Number(sellerPayment.taxAmount), order.currency)}
+                    </p>
+                    <p className="font-semibold">
+                      Seller amount:{' '}
+                      {formatCurrency(Number(sellerPayment.amount), order.currency)}
+                    </p>
+                    <p>
+                      {sellerPayment.paymentAccount?.method
+                        ? sellerPaymentMethodLabels[
+                            sellerPayment.paymentAccount.method as SellerPaymentMethod
+                          ] ?? 'Unknown method'
+                        : 'Unknown method'}{' '}
+                      · {sellerPayment.paymentAccount.accountTitle}
+                    </p>
+                    <p>
+                      Account/mobile: {sellerPayment.paymentAccount.accountNumber}
+                    </p>
+
+                    {sellerPayment.paymentAccount.iban && (
+                      <p>IBAN: {sellerPayment.paymentAccount.iban}</p>
+                    )}
+
+                    {sellerPayment.paymentAccount.instructions && (
+                      <p>{sellerPayment.paymentAccount.instructions}</p>
+                    )}
+
+                    <p>
+                      Buyer transfer reference: {sellerPayment.transferReference || 'Not provided'}
+                    </p>
+
                     {sellerPaymentStatus === 'pending_review' && (
                       <div className="flex flex-wrap gap-2 pt-2">
-                        <Button size="sm" onClick={() => void reviewSellerPayment(order.id, 'approve')}>
+                        <Button
+                          size="sm"
+                          onClick={() => void reviewSellerPayment(order.id, 'approve')}
+                        >
                           Approve payment
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => void reviewSellerPayment(order.id, 'reject')}>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void reviewSellerPayment(order.id, 'reject')}
+                        >
                           Reject payment
                         </Button>
                       </div>
                     )}
                   </div>
                 )}
+
                 {!canFulfill && (
-                  <p className="mt-1 text-xs text-amber-800">
-                    Fulfillment is blocked until your seller payment is confirmed as received.
+                  <p className="text-xs text-amber-800">
+                    Fulfillment is blocked until the required seller payment is confirmed.
                   </p>
                 )}
+              </div>
 
-                <p className="text-xs text-muted-foreground">
+              {/* Delivery address */}
+              <div>
+                <h4 className="text-sm font-semibold">Delivery address</h4>
+                <p className="mt-1 text-sm text-muted-foreground">
                   {order.shippingAddress?.name}
                   {order.shippingAddress?.address
                     ? ` · ${order.shippingAddress.address}`
@@ -1340,19 +1515,36 @@ return (
                 </p>
               </div>
 
+              {/* Next permitted fulfillment action */}
               {nextStatus[fulfillment] && (
-                <Button
-                  size="sm"
-                  disabled={!canFulfill}
-                  onClick={() =>
-                    void updateOrderStatus(
-                      order.id,
-                      nextStatus[fulfillment]
-                    )
-                  }
-                >
-                  Mark {nextStatus[fulfillment]}
-                </Button>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+                  <p className="text-xs text-muted-foreground">
+                    {fulfillment === 'pending'
+                      ? 'Next: begin processing'
+                      : fulfillment === 'processing'
+                        ? 'Next: mark the package as shipped'
+                        : 'Next: confirm delivery'}
+                  </p>
+
+                  <Button
+                    size="sm"
+                    disabled={!canFulfill}
+                    onClick={() =>
+                      void updateOrderStatus(
+                        order.id,
+                        nextStatus[fulfillment]
+                      )
+                    }
+                  >
+                    Mark {nextStatus[fulfillment]}
+                  </Button>
+                </div>
+              )}
+
+              {fulfillment === 'delivered' && (
+                <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                  Order delivered. Buyer feedback can be enabled in the next step.
+                </div>
               )}
             </div>
           );
