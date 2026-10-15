@@ -1,27 +1,28 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import {
-  getFirestore,
-  doc,
-  getDocFromServer,
-} from 'firebase/firestore';
+import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const clientConfig = {
   ...firebaseConfig,
   apiKey:
-    import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey,
+    import.meta.env.VITE_FIREBASE_API_KEY ||
+    firebaseConfig.apiKey,
   appId:
-    import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfig.appId,
+    import.meta.env.VITE_FIREBASE_APP_ID ||
+    firebaseConfig.appId,
   authDomain:
-    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ||
+    firebaseConfig.authDomain,
   measurementId:
-    import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || firebaseConfig.measurementId,
+    import.meta.env.VITE_FIREBASE_MEASUREMENT_ID ||
+    firebaseConfig.measurementId,
   messagingSenderId:
     import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID ||
     firebaseConfig.messagingSenderId,
   projectId:
-    import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId,
+    import.meta.env.VITE_FIREBASE_PROJECT_ID ||
+    firebaseConfig.projectId,
   storageBucket:
     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ||
     firebaseConfig.storageBucket,
@@ -38,22 +39,3 @@ export const db = getFirestore(
 );
 
 export const auth = getAuth(app);
-
-// Temporary debugging logs
-console.log('[Firebase] Project ID:', app.options.projectId);
-console.log(
-  '[Firebase] Database ID:',
-  clientConfig.firestoreDatabaseId
-);
-
-// Test connection
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log('[Firebase] Connection test succeeded.');
-  } catch (error) {
-    console.error('[Firebase] Connection test failed:', error);
-  }
-}
-
-void testConnection();
