@@ -7,9 +7,18 @@ interface ProductPrices {
 }
 
 export function formatCurrency(amount: number, currency: string) {
+  const normalizedCurrency =
+    typeof currency === 'string' ? currency.trim().toUpperCase() : '';
+
+  if (normalizedCurrency !== 'PKR' && normalizedCurrency !== 'USD') {
+    return `${new Intl.NumberFormat(undefined, {
+      maximumFractionDigits: 2,
+    }).format(amount)} (currency unavailable)`;
+  }
+
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
-    currency,
+    currency: normalizedCurrency,
     maximumFractionDigits: 2,
   }).format(amount);
 }
