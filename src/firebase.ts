@@ -1,32 +1,59 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import {
+  getFirestore,
+  doc,
+  getDocFromServer,
+} from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const clientConfig = {
   ...firebaseConfig,
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfig.appId,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || firebaseConfig.measurementId,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfig.storageBucket,
-  firestoreDatabaseId: import.meta.env.VITE_FIRESTORE_DATABASE_ID || firebaseConfig.firestoreDatabaseId,
+  apiKey:
+    import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey,
+  appId:
+    import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfig.appId,
+  authDomain:
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
+  measurementId:
+    import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || firebaseConfig.measurementId,
+  messagingSenderId:
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID ||
+    firebaseConfig.messagingSenderId,
+  projectId:
+    import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId,
+  storageBucket:
+    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ||
+    firebaseConfig.storageBucket,
+  firestoreDatabaseId:
+    import.meta.env.VITE_FIRESTORE_DATABASE_ID ||
+    firebaseConfig.firestoreDatabaseId,
 };
 
 const app = initializeApp(clientConfig);
-export const db = getFirestore(app, clientConfig.firestoreDatabaseId);
+
+export const db = getFirestore(
+  app,
+  clientConfig.firestoreDatabaseId
+);
+
 export const auth = getAuth(app);
+
+// Temporary debugging logs
+console.log('[Firebase] Project ID:', app.options.projectId);
+console.log(
+  '[Firebase] Database ID:',
+  clientConfig.firestoreDatabaseId
+);
 
 // Test connection
 async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
+    console.log('[Firebase] Connection test succeeded.');
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration. The client is offline.");
-    }
+    console.error('[Firebase] Connection test failed:', error);
   }
 }
-testConnection();
+
+void testConnection();
