@@ -9,3 +9,5 @@ coverage/
 *service-account*.json
 *serviceAccount*.json
 .firebase/
+
+data/
