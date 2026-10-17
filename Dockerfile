@@ -1,10 +1,11 @@
-FROM node:22.18-bookworm-slim AS build
+FROM node:22-bookworm-slim AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
+
 ARG VITE_ORDER_CURRENCY=USD
 ARG VITE_SUPPORT_EMAIL=""
 ARG VITE_FIREBASE_API_KEY=""
@@ -15,6 +16,7 @@ ARG VITE_FIREBASE_MESSAGING_SENDER_ID=""
 ARG VITE_FIREBASE_PROJECT_ID=""
 ARG VITE_FIREBASE_STORAGE_BUCKET=""
 ARG VITE_FIRESTORE_DATABASE_ID=""
+
 ENV VITE_ORDER_CURRENCY=$VITE_ORDER_CURRENCY
 ENV VITE_SUPPORT_EMAIL=$VITE_SUPPORT_EMAIL
 ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY
@@ -25,18 +27,25 @@ ENV VITE_FIREBASE_MESSAGING_SENDER_ID=$VITE_FIREBASE_MESSAGING_SENDER_ID
 ENV VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID
 ENV VITE_FIREBASE_STORAGE_BUCKET=$VITE_FIREBASE_STORAGE_BUCKET
 ENV VITE_FIRESTORE_DATABASE_ID=$VITE_FIRESTORE_DATABASE_ID
+
 RUN npm run lint && npm run build
 
-FROM node:22.18-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 
 WORKDIR /app
 ENV NODE_ENV=production
+ENV PORT=8080
+
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev \
+    && npm install --no-save tsx@4.21.0 \
+    && npm cache clean --force
 
 COPY server.ts firebase-applet-config.json ./
+COPY src/lib/currency.ts src/lib/sellerPayments.ts ./src/lib/
 COPY --from=build /app/dist ./dist
 
 USER node
 EXPOSE 8080
-CMD ["npm", "start"]
+
+CMD ["node", "--import", "tsx", "server.ts"]
