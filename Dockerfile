@@ -38,9 +38,9 @@ ENV PORT=8080
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev \
-    && npm install --no-save tsx@4.21.0 \
+    && npm install --global tsx@4.21.0 \
     && npm cache clean --force
-
+    
 COPY server.ts firebase-applet-config.json ./
 COPY src/lib/currency.ts src/lib/sellerPayments.ts ./src/lib/
 COPY --from=build /app/dist ./dist
@@ -48,4 +48,4 @@ COPY --from=build /app/dist ./dist
 USER node
 EXPOSE 8080
 
-CMD ["node", "--import", "tsx", "server.ts"]
+CMD ["tsx", "server.ts"]
