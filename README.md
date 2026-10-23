@@ -1,4 +1,4 @@
-﻿# ðŸŒ™ Halal-Bazaar
+# Halal-Bazaar
 
 <div align="center">
   <img src="https://img.shields.io/badge/Developed%20by-Bilal%20Ahmed-brightgreen?style=for-the-badge" alt="Developer" />
@@ -11,51 +11,51 @@
 
 <br/>
 
-> **Halal-Bazaar** â€” A multi-vendor marketplace for buyers and seller-submitted halal product listings. Built with React 19, Firebase, TypeScript, and an AI-powered chatbot.
+> **Halal-Bazaar** — A multi-vendor marketplace for buyers and seller-submitted halal product listings. Built with React 19, Firebase, TypeScript, and an AI-powered chatbot.
 
 ---
 
-## âœ¨ Features
+## Features
 
-### ðŸ›ï¸ Shopping Experience
-- **Product Catalog** â€” Search, category and price filters, sorting, published listings, and product details
-- **Cart and Checkout** â€” localStorage cart, server-validated pricing/stock, idempotent orders, COD, and seller-specific manual payments
-- **Listing claims** â€” Sellers may mark listings as halal certified; this application does not independently verify certificates
-- **Order tracking** â€” Buyer order history/details and seller fulfillment status updates
-- **Buyer dashboard** â€” Separate buyer workspace for browsing, order history, payment follow-up, and saved addresses; approved sellers can use it too
+### Shopping Experience
+- **Product Catalog** — Search, category and price filters, sorting, published listings, and product details
+- **Cart and Checkout** — localStorage cart, server-validated pricing/stock, idempotent orders, COD, and seller-specific manual payments
+- **Listing claims** — Sellers may mark listings as halal certified; this application does not independently verify certificates
+- **Order tracking** — Buyer order history/details and seller fulfillment status updates
+- **Buyer dashboard** — Separate buyer workspace for browsing, order history, payment follow-up, and saved addresses; approved sellers can use it too
 
-### ðŸ” Authentication
-- **Google OAuth** â€” One-click sign-in with Google account
-- **Email and password** â€” Firebase email/password registration and sign-in with verification and password reset
-- **Email link** â€” Optional Firebase passwordless sign-in
-- **Role-Based Access** â€” Buyer, Seller, and Admin roles with protected routes
+### Authentication
+- **Google OAuth** — One-click sign-in with Google account
+- **Email and password** — Firebase email/password registration and sign-in with verification and password reset
+- **Email link** — Optional Firebase passwordless sign-in
+- **Role-Based Access** — Buyer, Seller, and Admin roles with protected routes
 
-### ðŸª Seller Dashboard
-- **Seller onboarding** â€” Seller application and admin approval/rejection with a reason
-- **Product management** â€” Approved sellers create/edit listings, manage inventory, publish/unpublish, and delete their own products
-- **Category Tags** â€” Assign products to 6 categories with icon selectors
-- **Seller profile and fulfillment** â€” Manage store information and progress orders
-- **Payment accounts and reviews** â€” Maintain up to 10 JazzCash, Easypaisa, Raast, or bank-transfer accounts; review only payments for the seller's own order lines
-- **Order value** â€” Gross order value is calculated from actual orders; no review/rating feature is currently offered
+### Seller Dashboard
+- **Seller onboarding** — Seller application and admin approval/rejection with a reason
+- **Product management** — Approved sellers create/edit listings, manage inventory, publish/unpublish, and delete their own products
+- **Category Tags** — Assign products to 6 categories with icon selectors
+- **Seller profile and fulfillment** — Manage store information and progress orders
+- **Payment accounts and reviews** — Maintain up to 10 JazzCash, Easypaisa, Raast, or bank-transfer accounts; review only payments for the seller's own order lines
+- **Order value** — Gross order value is calculated from actual orders; no review/rating feature is currently offered
 
-### â„¹ï¸ Public information
-- **About, contact, FAQ, and blog** â€” Marketplace information, buyer/seller guides, support configuration, and frequently asked questions
-- **Privacy and terms** â€” Product-specific draft policies that must be reviewed by the operator before launch
+### Public information
+- **About, contact, FAQ, and blog** — Marketplace information, buyer/seller guides, support configuration, and frequently asked questions
+- **Privacy and terms** — Product-specific draft policies that must be reviewed by the operator before launch
 
-### ðŸ›¡ï¸ Admin Panel
-- **User Management** â€” View all registered users with stats overview
-- **Seller application review** â€” Approve/reject requests, requiring a rejection reason
-- **Moderation** â€” Suspend/reactivate users, publish/unpublish listings, and review bank-transfer payments
-- **Audit trail** â€” Sensitive admin changes are recorded server-side
+### Admin Panel
+- **User Management** — View all registered users with stats overview
+- **Seller application review** — Approve/reject requests, requiring a rejection reason
+- **Moderation** — Suspend/reactivate users, publish/unpublish listings, and review bank-transfer payments
+- **Audit trail** — Sensitive admin changes are recorded server-side
 
-### ðŸ¤– AI ChatBot
-- **Gemini-Powered** â€” Built with Google Gemini AI
-- **Context-Aware** â€” Acts as a halal shopping assistant
-- **Floating UI** â€” Elegant slide-in chat window with message history
+### AI ChatBot
+- **Gemini-Powered** — Built with Google Gemini AI
+- **Context-Aware** — Acts as a halal shopping assistant
+- **Floating UI** — Elegant slide-in chat window with message history
 
 ---
 
-## ðŸš€ Tech Stack
+## Tech Stack
 
 | Technology | Version | Purpose |
 |---|---|---|
@@ -64,7 +64,7 @@
 | Vite | `^6.2.0` (lockfile resolves to 6.4.4) | Build tool & dev server |
 | Tailwind CSS | v4 | Utility-first styling |
 | Firebase | 12 | Auth, Firestore DB |
-| shadcn/ui (base-nova) | â€” | UI component library |
+| shadcn/ui (base-nova) | — | UI component library |
 | @base-ui/react | 1.3 | Accessible base components |
 | Motion (Framer) | 12 | Animations |
 | React Router | 7 | Client-side routing |
@@ -75,27 +75,27 @@
 
 ---
 
-## ðŸ“‚ Project Structure
+## Project Structure
 
 ```
 Halal-Bazaar/
-â”œâ”€â”€ src/
-â”‚   â”œâ”€â”€ components/              # Shared UI, auth, navigation, product cards
-â”‚   â”œâ”€â”€ contexts/                # Firebase auth and cart state
-â”‚   â”œâ”€â”€ lib/                     # API client, currency, Firebase and utilities
-â”‚   â”œâ”€â”€ pages/                   # Buyer, seller and administrator screens
-â”‚   â”œâ”€â”€ App.tsx                  # Routes and providers
-â”‚   â””â”€â”€ types.ts                 # Marketplace data types
-â”œâ”€â”€ components/ui/               # Shared UI primitives
-â”œâ”€â”€ server.ts                    # Express API and Vite middleware
-â”œâ”€â”€ firebase.json                # Rules deployment configuration
-â”œâ”€â”€ firestore.rules              # Client Firestore access policy
-â””â”€â”€ package.json
+|-- src/
+|   |-- components/              # Shared UI, auth, navigation, product cards
+|   |-- contexts/                # Firebase auth and cart state
+|   |-- lib/                     # API client, currency, Firebase and utilities
+|   |-- pages/                   # Buyer, seller and administrator screens
+|   |-- App.tsx                  # Routes and providers
+|   `-- types.ts                 # Marketplace data types
+|-- components/ui/               # Shared UI primitives
+|-- server.ts                    # Express API and Vite middleware
+|-- firebase.json                # Rules deployment configuration
+|-- firestore.rules              # Client Firestore access policy
+`-- package.json
 ```
 
 ---
 
-## âš™ï¸ Setup & Installation
+## Setup & Installation
 
 ### Prerequisites
 - Node.js 22.18+ (Firebase Admin SDK requirement; production start uses Node's built-in TypeScript support)
@@ -105,7 +105,7 @@ Halal-Bazaar/
 ### 1. Clone the repository
 ```bash
 git clone https://github.com/Bilaal-Ahmed/Halal-Bazaar.git
-cd Halal-Bazaar/Halal-Bazaar
+cd Halal-Bazaar
 ```
 
 ### 2. Install dependencies
@@ -156,12 +156,12 @@ Keep the checked-in `firebase-applet-config.json` pointed at the existing Fireba
 ### 5. Enable Firebase Services
 
 In [Firebase Console](https://console.firebase.google.com/):
-1. **Authentication** â†’ Sign-in methods â†’ Enable:
+1. **Authentication** -> Sign-in methods -> Enable:
    - Google
    - Email/Password
    - Email link only if you intend to use the optional passwordless sign-in
-2. **Firestore Database** â†’ Keep the currently configured database and its data
-3. **Authorized Domains** â†’ Add `localhost`
+2. **Firestore Database** -> Keep the currently configured database and its data
+3. **Authorized Domains** -> Add `localhost`
 
 ### 6. Deploy Firestore security rules
 
@@ -190,7 +190,7 @@ The `firestore.rules.test.ts` test file must be authored to cover the buyer, sel
 npm run dev
 ```
 
-Open **http://localhost:3000** ðŸŽ‰
+Open **http://localhost:3000**
 
 The API needs server-side Firebase Admin credentials to perform checkout and administrative operations. If credentials are unavailable, privileged endpoints fail closed; browse-only client functionality can still load.
 
@@ -261,7 +261,7 @@ Frontend-public build configuration: `VITE_API_BASE_URL` is the HTTPS origin of 
 
 ---
 
-## ðŸ”‘ Email Link Login
+## Email Link Login
 
 Halal-Bazaar supports optional passwordless sign-in via Firebase email link:
 
@@ -269,13 +269,13 @@ Halal-Bazaar supports optional passwordless sign-in via Firebase email link:
 2. Select **"Sign in with Email Link"**
 3. Enter your email address
 4. Firebase sends a sign-in link to your inbox
-5. Click the link â€” you're signed in automatically!
+5. Click the link — you're signed in automatically!
 
 > **Note:** Firebase must have Email Link authentication enabled and your domain must be in the authorized domains list.
 
 ---
 
-## ðŸŽ¨ Design System
+## Design System
 
 | Token | Value | Usage |
 |---|---|---|
@@ -290,19 +290,20 @@ Custom CSS classes: `.hero-gradient`, `.halal-badge`, `.card-hover`, `.btn-prima
 
 ---
 
-## ðŸ“¦ Available Scripts
+## Available Scripts
 
 ```bash
 npm run dev      # Start development server (Express + Vite)
 npm run build    # Build for production
 npm start        # Start the production Express API/static server (Node.js 22.18+)
-npm run preview  # Preview production build
+npm run preview  # Preview the Vite frontend build only
+npm test         # Run the currency and seller-payment unit tests
 npm run lint     # TypeScript type checking
 ```
 
 ---
 
-## ðŸ”’ Security
+## Security
 
 - Firebase ID tokens are verified by Firebase Admin SDK for protected API endpoints.
 - Server operations enforce active-account, verified-email, approved-seller, and administrator checks.
@@ -314,7 +315,7 @@ npm run lint     # TypeScript type checking
 - Service-account credential files and `.env` files are excluded from version control.
 - JazzCash/Easypaisa do not accept or process payment callbacks yet. No provider-specific request format or signature scheme is assumed without official merchant documentation and credentials.
 
-## ðŸ§ª Manual smoke tests
+## Manual smoke tests
 
 Run `npm test`, `npm run lint`, and `npm run build` first, then use two browser accounts (buyer and seller) plus the configured administrator against a staging Firebase project. A seller account should also visit `/dashboard` and use buyer functions to verify the roles do not exclude one another:
 
@@ -336,7 +337,7 @@ For rules validation, use the Firebase Emulator Suite or a non-production Fireba
 
 ---
 
-## ðŸ¤ Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
@@ -346,13 +347,13 @@ For rules validation, use the Firebase Emulator Suite or a non-production Fireba
 
 ---
 
-## ðŸ“„ License
+## License
 
 This project is licensed under the **MIT License**.
 
 ---
 
-## ðŸ‘¨â€ðŸ’» Developer
+## Developer
 
 <div align="center">
   <strong>Bilal Ahmed</strong><br/>
@@ -363,8 +364,7 @@ This project is licensed under the **MIT License**.
 ---
 
 <div align="center">
-  Made with â¤ï¸ for the Muslim community worldwide
+  For the Muslim community worldwide
   <br/>
-  <sub>Halal-Bazaar Â© 2026 â€” All rights reserved</sub>
+  <sub>Halal-Bazaar © 2026 — All rights reserved</sub>
 </div>
-
