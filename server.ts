@@ -34,7 +34,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PORT = Number(process.env.PORT || 3000);
 const LEGACY_ADMIN_EMAIL = "ba341914@gmail.com";
-const ADMIN_EMAILS = new Set(
+const ADMIN_EMAILS = new Set<string>(
   [LEGACY_ADMIN_EMAIL, ...(process.env.ADMIN_EMAILS || "").split(",")]
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean),
@@ -61,20 +61,20 @@ const LEGACY_PRODUCT_PRICE_CURRENCY: "PKR" | "USD" | undefined =
   legacyPriceCurrencyValue === "PKR" || legacyPriceCurrencyValue === "USD"
     ? legacyPriceCurrencyValue
     : undefined;
-const COD_ALLOWED_COUNTRIES = new Set(
+const COD_ALLOWED_COUNTRIES = new Set<string>(
   (process.env.COD_ALLOWED_COUNTRIES || "PK")
     .split(",")
-    .map((country) => country.trim().toUpperCase())
+    .map((country: string) => country.trim().toUpperCase())
     .filter(Boolean),
 );
-if ([...COD_ALLOWED_COUNTRIES].some((country) => !/^[A-Z]{2}$/.test(country))) {
+if ([...COD_ALLOWED_COUNTRIES].some((country: string) => !/^[A-Z]{2}$/.test(country))) {
   throw new Error("COD_ALLOWED_COUNTRIES must contain comma-separated ISO 3166-1 alpha-2 codes.");
 }
 const DOMESTIC_BANK_TRANSFER_INSTRUCTIONS = process.env.DOMESTIC_BANK_TRANSFER_INSTRUCTIONS?.trim() || "";
 const INTERNATIONAL_BANK_TRANSFER_INSTRUCTIONS = process.env.INTERNATIONAL_BANK_TRANSFER_INSTRUCTIONS?.trim() || "";
 const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
-const corsOrigins = new Set(
-  (process.env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
+const corsOrigins = new Set<string>(
+  (process.env.CORS_ORIGINS || "").split(",").map((origin: string) => origin.trim()).filter(Boolean),
 );
 const requestCounts = new Map<string, { count: number; expiresAt: number }>();
 const MAX_RATE_LIMIT_KEYS = 20_000;
@@ -187,14 +187,14 @@ function allowConfiguredOrigins(req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Origin", origin);
     res.vary("Origin");
   }
 
   if (req.method === "OPTIONS") {
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    res.status(204).end();
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    res.status(204).send();
     return;
   }
 
@@ -1207,6 +1207,58 @@ app.patch(
       },
     });
   }));
+
+
+  app.get("/sitemap.xml", asyncRoute(async (_req, res) => {
+    const baseUrl = "https://halal-bazaar.duckdns.org";
+
+    const staticPaths = [
+      "/",
+      "/about",
+      "/blog",
+      "/blog/shopping-with-care",
+      "/blog/seller-listing-basics",
+      "/blog/understanding-payment-status",
+      "/contact",
+      "/faq",
+      "/privacy",
+      "/terms",
+      "/products",
+    ];
+
+    const snapshot = await getAdminDb()
+      .collection("products")
+      .where("published", "==", true)
+      .limit(49000)
+      .get();
+
+    const productUrls = snapshot.docs.map(
+      (document) =>
+        `${baseUrl}/products/${encodeURIComponent(document.id)}`,
+    );
+
+    const urls = [...staticPaths.map((route) => `${baseUrl}${route}`), ...productUrls];
+
+    const xmlEscape = (value: string) =>
+      value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+
+    const xml = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+      ...urls.map(
+        (url) => `  <url><loc>${xmlEscape(url)}</loc></url>`,
+      ),
+      "</urlset>",
+    ].join("\n");
+
+    res.status(200).type("application/xml").send(xml);
+  }));
+
 
   if (process.env.NODE_ENV !== "production") {
     const { createServer } = await import("vite");
